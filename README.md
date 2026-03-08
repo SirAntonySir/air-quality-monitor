@@ -17,6 +17,10 @@ Built with SwiftUI and Swift Charts. Runs as both a windowed app and a menu bar 
 
 ![Expanded chart](assets/screenshot-expanded.png)
 
+**Menu bar widget**
+
+![Menu bar widget](assets/screenshot-menubar.png)
+
 </details>
 
 ## Features
