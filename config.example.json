@@ -1,0 +1,47 @@
+{
+    "homeAssistantURL": "http://YOUR_HA_IP:8123",
+    "token": "YOUR_LONG_LIVED_ACCESS_TOKEN",
+    "refreshIntervalSeconds": 30,
+    "fullRefreshIntervalSeconds": 900,
+    "historyHours": 12,
+    "sensors": [
+        {
+            "key": "temperature",
+            "entityId": "sensor.alpstuga_air_quality_monitor_temperature",
+            "name": "Temperature",
+            "unit": "\u00b0C",
+            "icon": "thermometer.medium",
+            "color": "orange",
+            "thresholdMin": 18,
+            "thresholdMax": 26
+        },
+        {
+            "key": "humidity",
+            "entityId": "sensor.alpstuga_air_quality_monitor_humidity",
+            "name": "Humidity",
+            "unit": "%",
+            "icon": "humidity",
+            "color": "cyan",
+            "thresholdMin": 30,
+            "thresholdMax": 60
+        },
+        {
+            "key": "co2",
+            "entityId": "sensor.alpstuga_air_quality_monitor_carbon_dioxide",
+            "name": "CO\u2082",
+            "unit": "ppm",
+            "icon": "aqi.medium",
+            "color": "green",
+            "thresholdMax": 1000
+        },
+        {
+            "key": "pm25",
+            "entityId": "sensor.alpstuga_air_quality_monitor_pm2_5",
+            "name": "PM2.5",
+            "unit": "\u00b5g/m\u00b3",
+            "icon": "smoke",
+            "color": "purple",
+            "thresholdMax": 25
+        }
+    ]
+}
