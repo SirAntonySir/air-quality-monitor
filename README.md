@@ -4,6 +4,21 @@ A native macOS app that displays real-time air quality data from an **IKEA ALPST
 
 Built with SwiftUI and Swift Charts. Runs as both a windowed app and a menu bar widget.
 
+![Dashboard](assets/screenshot-dashboard.png)
+
+<details>
+<summary>More screenshots</summary>
+
+**Full-screen view**
+
+![Full screen](assets/screenshot-fullscreen.png)
+
+**Expanded single chart**
+
+![Expanded chart](assets/screenshot-expanded.png)
+
+</details>
+
 ## Features
 
 - **Live charts** for Temperature, Humidity, CO2, and PM2.5 with 12-hour history

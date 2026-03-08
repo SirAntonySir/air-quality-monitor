@@ -10,6 +10,7 @@ build:
 	@mkdir -p "$(BUILD_DIR)/$(APP_NAME).app/Contents/Resources"
 	@cp ".build/release/$(BINARY_NAME)" "$(BUILD_DIR)/$(APP_NAME).app/Contents/MacOS/"
 	@cp Info.plist "$(BUILD_DIR)/$(APP_NAME).app/Contents/"
+	@cp assets/AppIcon.icns "$(BUILD_DIR)/$(APP_NAME).app/Contents/Resources/"
 	@codesign --force --sign - "$(BUILD_DIR)/$(APP_NAME).app"
 	@echo "Built: $(BUILD_DIR)/$(APP_NAME).app"
 
