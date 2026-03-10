@@ -11,11 +11,49 @@ final class SensorViewModel {
     var config: AppConfig?
     var configLoaded = false
 
+    /// Currently selected category in sidebar
+    var selectedCategoryId: String?
+    /// Currently selected subcategory (nil = show all in category)
+    var selectedSubcategoryId: String?
+
     private var client: HAClient?
     private var monitoringTask: Task<Void, Never>?
     private var fullRefreshTask: Task<Void, Never>?
 
-    var sensorConfigs: [SensorConfig] { config?.sensors ?? [] }
+    var categories: [SensorCategory] { config?.categories ?? [] }
+
+    /// Sensors to display based on current selection
+    var visibleSensors: [SensorConfig] {
+        guard let config else { return [] }
+
+        guard let catId = selectedCategoryId,
+              let category = config.categories.first(where: { $0.id == catId }) else {
+            // No selection: show all sensors
+            return config.allSensors
+        }
+
+        if let subId = selectedSubcategoryId,
+           let sub = category.subcategories.first(where: { $0.id == subId }) {
+            return sub.sensors
+        }
+
+        return category.allSensors
+    }
+
+    /// Title for the current selection
+    var selectionTitle: String {
+        guard let catId = selectedCategoryId,
+              let category = config?.categories.first(where: { $0.id == catId }) else {
+            return "All Sensors"
+        }
+
+        if let subId = selectedSubcategoryId,
+           let sub = category.subcategories.first(where: { $0.id == subId }) {
+            return sub.name
+        }
+
+        return category.name
+    }
 
     var hasConfig: Bool { config != nil }
 
@@ -28,6 +66,10 @@ final class SensorViewModel {
             let loaded = try ConfigLoader.load()
             config = loaded
             client = HAClient(baseURL: loaded.homeAssistantURL, token: loaded.token)
+            // Auto-select first category
+            if selectedCategoryId == nil {
+                selectedCategoryId = loaded.categories.first?.id
+            }
             configLoaded = true
         } catch {
             lastError = "Config error: \(error.localizedDescription)"
@@ -40,7 +82,7 @@ final class SensorViewModel {
     }
 
     func currentValue(forKey key: String) -> Double? {
-        guard let sensor = config?.sensors.first(where: { $0.key == key }) else { return nil }
+        guard let sensor = config?.allSensors.first(where: { $0.key == key }) else { return nil }
         return readings[sensor.entityId]?.last?.value
     }
 
@@ -51,11 +93,9 @@ final class SensorViewModel {
         fullRefreshTask?.cancel()
 
         monitoringTask = Task {
-            // Brief delay on launch to let the network stack initialize
             try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled else { return }
 
-            // Retry initial fetch up to 3 times
             for attempt in 0..<3 {
                 await fetchFullHistory()
                 if lastError == nil { break }
@@ -93,7 +133,7 @@ final class SensorViewModel {
         defer { isLoading = false }
 
         do {
-            let entityIds = config.sensors.map(\.entityId)
+            let entityIds = config.allSensors.map(\.entityId)
             let history = try await client.fetchHistory(entityIds: entityIds, hours: config.historyHours)
             for (entityId, data) in history {
                 readings[entityId] = data
@@ -109,7 +149,7 @@ final class SensorViewModel {
         guard let config, let client else { return }
 
         do {
-            for sensor in config.sensors {
+            for sensor in config.allSensors {
                 if let reading = try await client.fetchCurrentState(entityId: sensor.entityId) {
                     var current = readings[sensor.entityId] ?? []
 

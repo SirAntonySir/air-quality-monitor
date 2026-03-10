@@ -26,8 +26,10 @@ struct MenuBarView: View {
                 .padding(.bottom, 8)
 
             VStack(spacing: 2) {
-                ForEach(viewModel.sensorConfigs) { sensor in
-                    MenuBarSensorRow(sensor: sensor, viewModel: viewModel)
+                ForEach(viewModel.categories) { category in
+                    if !category.allSensors.isEmpty {
+                        MenuBarCategorySection(category: category, viewModel: viewModel)
+                    }
                 }
             }
             .padding(.vertical, 4)
@@ -57,7 +59,49 @@ struct MenuBarView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
         }
-        .frame(width: 260)
+        .frame(width: 280)
+    }
+}
+
+private struct MenuBarCategorySection: View {
+    let category: SensorCategory
+    let viewModel: SensorViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            // Category header
+            HStack(spacing: 6) {
+                Image(systemName: category.icon)
+                Text(category.name)
+                    .font(.system(.caption, design: .rounded, weight: .semibold))
+            }
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, 16)
+            .padding(.top, 4)
+
+            // Direct sensors
+            ForEach(category.sensors) { sensor in
+                MenuBarSensorRow(sensor: sensor, viewModel: viewModel)
+            }
+
+            // Subcategory sensors
+            ForEach(category.subcategories) { sub in
+                if !sub.sensors.isEmpty {
+                    HStack(spacing: 4) {
+                        Image(systemName: sub.icon)
+                        Text(sub.name)
+                            .font(.system(.caption2, design: .rounded))
+                    }
+                    .foregroundStyle(.quaternary)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 2)
+
+                    ForEach(sub.sensors) { sensor in
+                        MenuBarSensorRow(sensor: sensor, viewModel: viewModel)
+                    }
+                }
+            }
+        }
     }
 }
 

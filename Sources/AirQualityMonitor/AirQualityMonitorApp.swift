@@ -22,7 +22,8 @@ struct AirQualityMonitorApp: App {
             }
         }
         .windowResizability(.contentMinSize)
-        .windowStyle(.hiddenTitleBar)
+        .windowStyle(.titleBar)
+        .windowToolbarStyle(.unified(showsTitle: false))
 
         Settings {
             SettingsView(viewModel: viewModel)
