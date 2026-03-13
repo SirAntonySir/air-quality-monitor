@@ -17,13 +17,13 @@ struct AirQualityMonitorApp: App {
                 }
             }
             .onAppear {
+                NotificationManager.shared.requestPermission()
                 viewModel.loadConfig()
                 viewModel.startMonitoring()
             }
         }
         .windowResizability(.contentMinSize)
-        .windowStyle(.titleBar)
-        .windowToolbarStyle(.unified(showsTitle: false))
+        .windowStyle(.hiddenTitleBar)
 
         Settings {
             SettingsView(viewModel: viewModel)

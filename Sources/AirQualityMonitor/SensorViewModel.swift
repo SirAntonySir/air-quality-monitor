@@ -77,6 +77,14 @@ final class SensorViewModel {
         }
     }
 
+    var menuBarSensor: SensorConfig? {
+        guard let config else { return nil }
+        if let key = config.menuBarSensorKey {
+            return config.allSensors.first { $0.key == key }
+        }
+        return config.allSensors.first
+    }
+
     func currentValue(for sensor: SensorConfig) -> Double? {
         readings[sensor.entityId]?.last?.value
     }
@@ -84,6 +92,45 @@ final class SensorViewModel {
     func currentValue(forKey key: String) -> Double? {
         guard let sensor = config?.allSensors.first(where: { $0.key == key }) else { return nil }
         return readings[sensor.entityId]?.last?.value
+    }
+
+    func setMenuBarSensorKey(_ key: String?) {
+        guard var cfg = config else { return }
+        cfg.menuBarSensorKey = key
+        config = cfg
+        try? ConfigLoader.save(cfg)
+    }
+
+    func moveSensor(key: String, toCategoryId: String, subcategoryId: String?) {
+        guard var cfg = config else { return }
+
+        var sensorToMove: SensorConfig?
+        outer: for i in cfg.categories.indices {
+            if let idx = cfg.categories[i].sensors.firstIndex(where: { $0.key == key }) {
+                sensorToMove = cfg.categories[i].sensors.remove(at: idx)
+                break outer
+            }
+            for j in cfg.categories[i].subcategories.indices {
+                if let idx = cfg.categories[i].subcategories[j].sensors.firstIndex(where: { $0.key == key }) {
+                    sensorToMove = cfg.categories[i].subcategories[j].sensors.remove(at: idx)
+                    break outer
+                }
+            }
+        }
+
+        guard let sensor = sensorToMove else { return }
+
+        if let catIdx = cfg.categories.firstIndex(where: { $0.id == toCategoryId }) {
+            if let subId = subcategoryId,
+               let subIdx = cfg.categories[catIdx].subcategories.firstIndex(where: { $0.id == subId }) {
+                cfg.categories[catIdx].subcategories[subIdx].sensors.append(sensor)
+            } else {
+                cfg.categories[catIdx].sensors.append(sensor)
+            }
+        }
+
+        config = cfg
+        try? ConfigLoader.save(cfg)
     }
 
     func startMonitoring() {
@@ -140,6 +187,7 @@ final class SensorViewModel {
             }
             lastError = nil
             lastUpdated = Date()
+            NotificationManager.shared.seedState(readings: readings, sensors: config.allSensors)
         } catch {
             lastError = error.localizedDescription
         }
@@ -163,6 +211,8 @@ final class SensorViewModel {
                     current.removeAll { $0.date < cutoff }
 
                     readings[sensor.entityId] = current
+
+                    NotificationManager.shared.checkReading(reading, sensor: sensor)
                 }
             }
             lastError = nil

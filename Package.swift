@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "AirQualityMonitor",
-    platforms: [.macOS("15.0")],
+    platforms: [.macOS("26.0")],
     targets: [
         .executableTarget(
             name: "AirQualityMonitor",

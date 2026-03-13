@@ -45,7 +45,7 @@ struct SensorChartView: View {
             chart
         }
         .padding()
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .glassEffect(.regular, in: .rect(cornerRadius: 16))
         .cursor(.pointingHand)
     }
 
@@ -135,16 +135,6 @@ struct SensorChartView: View {
             }
         }
         .chartYScale(domain: yDomain)
-        .chartYAxisLabel(position: .leading) {
-            Text(sensor.unit)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .chartXAxisLabel(position: .bottom, alignment: .center) {
-            Text("Time")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: isExpanded ? 12 : 6)) { _ in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))

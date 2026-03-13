@@ -10,6 +10,7 @@ struct AppConfig: Codable {
     var fullRefreshIntervalSeconds: Int
     var historyHours: Int
     var categories: [SensorCategory]
+    var menuBarSensorKey: String?
 
     /// All sensors across all categories and subcategories (for fetching)
     var allSensors: [SensorConfig] {
@@ -22,17 +23,19 @@ struct AppConfig: Codable {
 
     enum CodingKeys: String, CodingKey {
         case homeAssistantURL, token, refreshIntervalSeconds, fullRefreshIntervalSeconds, historyHours
-        case categories, sensors // "sensors" for legacy format
+        case categories, sensors, menuBarSensorKey // "sensors" for legacy format
     }
 
     init(homeAssistantURL: String, token: String, refreshIntervalSeconds: Int,
-         fullRefreshIntervalSeconds: Int, historyHours: Int, categories: [SensorCategory]) {
+         fullRefreshIntervalSeconds: Int, historyHours: Int, categories: [SensorCategory],
+         menuBarSensorKey: String? = nil) {
         self.homeAssistantURL = homeAssistantURL
         self.token = token
         self.refreshIntervalSeconds = refreshIntervalSeconds
         self.fullRefreshIntervalSeconds = fullRefreshIntervalSeconds
         self.historyHours = historyHours
         self.categories = categories
+        self.menuBarSensorKey = menuBarSensorKey
     }
 
     init(from decoder: Decoder) throws {
@@ -42,6 +45,8 @@ struct AppConfig: Codable {
         refreshIntervalSeconds = try container.decode(Int.self, forKey: .refreshIntervalSeconds)
         fullRefreshIntervalSeconds = try container.decode(Int.self, forKey: .fullRefreshIntervalSeconds)
         historyHours = try container.decode(Int.self, forKey: .historyHours)
+
+        menuBarSensorKey = try container.decodeIfPresent(String.self, forKey: .menuBarSensorKey)
 
         // Try new format first, fall back to legacy flat sensors
         if let cats = try? container.decode([SensorCategory].self, forKey: .categories) {
@@ -70,6 +75,7 @@ struct AppConfig: Codable {
         try container.encode(fullRefreshIntervalSeconds, forKey: .fullRefreshIntervalSeconds)
         try container.encode(historyHours, forKey: .historyHours)
         try container.encode(categories, forKey: .categories)
+        try container.encodeIfPresent(menuBarSensorKey, forKey: .menuBarSensorKey)
     }
 
     static let defaultCategories: [SensorCategory] = [

@@ -9,7 +9,9 @@ struct SettingsView: View {
     @State private var refreshInterval: Int = 30
     @State private var fullRefreshInterval: Int = 900
     @State private var categories: [SensorCategory] = []
-    @State private var saveMessage: String?
+    @State private var menuBarSensorKey: String = ""
+    @State private var saveSuccess = false
+    @State private var saveError: String?
     @State private var testResult: String?
     @State private var isTesting = false
     @State private var updateStatus: UpdateStatus = .idle
@@ -26,6 +28,14 @@ struct SettingsView: View {
         .padding(20)
         .frame(width: 600, height: 520)
         .onAppear(perform: loadFromConfig)
+        .alert("Save Error", isPresented: Binding(
+            get: { saveError != nil },
+            set: { if !$0 { saveError = nil } }
+        )) {
+            Button("OK") { saveError = nil }
+        } message: {
+            Text(saveError ?? "")
+        }
     }
 
     // MARK: - Connection Tab
@@ -34,10 +44,26 @@ struct SettingsView: View {
         Form {
             Section {
                 TextField("Home Assistant URL", text: $url, prompt: Text("http://192.168.178.120:8123"))
-                    .textFieldStyle(.roundedBorder)
 
                 SecureField("Long-Lived Access Token", text: $token, prompt: Text("Paste token here"))
-                    .textFieldStyle(.roundedBorder)
+
+                HStack {
+                    Button("Test Connection") {
+                        testConnection()
+                    }
+                    .disabled(url.isEmpty || token.isEmpty || isTesting)
+
+                    if isTesting {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+
+                    if let result = testResult {
+                        Text(result)
+                            .font(.caption)
+                            .foregroundStyle(result.contains("OK") ? .green : .red)
+                    }
+                }
             } header: {
                 Text("Home Assistant")
             }
@@ -51,50 +77,56 @@ struct SettingsView: View {
             }
 
             HStack {
-                Button("Test Connection") {
-                    testConnection()
-                }
-                .disabled(url.isEmpty || token.isEmpty || isTesting)
-
-                if isTesting {
-                    ProgressView()
-                        .controlSize(.small)
-                }
-
-                if let result = testResult {
-                    Text(result)
-                        .font(.caption)
-                        .foregroundStyle(result.contains("OK") ? .green : .red)
-                }
-
                 Spacer()
-
-                Button("Save") {
-                    save()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(url.isEmpty || token.isEmpty)
-
-                if let msg = saveMessage {
-                    Text(msg)
-                        .font(.caption)
-                        .foregroundStyle(.green)
-                }
+                saveButton
+                    .disabled(url.isEmpty || token.isEmpty)
             }
         }
         .formStyle(.grouped)
+    }
+
+    private var saveButton: some View {
+        Button(action: save) {
+            if saveSuccess {
+                Label("Saved", systemImage: "checkmark")
+            } else {
+                Text("Save")
+            }
+        }
+        .buttonStyle(.borderedProminent)
+        .animation(.default, value: saveSuccess)
     }
 
     // MARK: - Sensors Tab
 
     private var sensorsTab: some View {
         VStack(spacing: 0) {
+            HStack {
+                Text("Menu Bar Sensor")
+                    .font(.system(.subheadline, design: .rounded))
+                Picker("", selection: $menuBarSensorKey) {
+                    ForEach(allSensorsFlat) { sensor in
+                        Text(sensor.name).tag(sensor.key)
+                    }
+                }
+                .labelsHidden()
+            }
+            .padding(.horizontal)
+            .padding(.top, 12)
+
+            Divider().padding(.top, 8)
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     ForEach($categories) { $category in
-                        CategoryEditorView(category: $category, onDelete: {
-                            categories.removeAll { $0.id == category.id }
-                        })
+                        CategoryEditorView(
+                            category: $category,
+                            destinations: moveDestinations,
+                            onDelete: {
+                                categories.removeAll { $0.id == category.id }
+                            },
+                            onMoveSensor: { key, dest in moveSensor(key: key, to: dest) }
+                        )
                     }
 
                     Button {
@@ -116,14 +148,7 @@ struct SettingsView: View {
 
             HStack {
                 Spacer()
-                Button("Save") { save() }
-                    .buttonStyle(.borderedProminent)
-
-                if let msg = saveMessage {
-                    Text(msg)
-                        .font(.caption)
-                        .foregroundStyle(.green)
-                }
+                saveButton
             }
             .padding()
         }
@@ -212,6 +237,48 @@ struct SettingsView: View {
 
     // MARK: - Actions
 
+    private var allSensorsFlat: [SensorConfig] {
+        categories.flatMap { cat in
+            cat.sensors + cat.subcategories.flatMap(\.sensors)
+        }
+    }
+
+    private var moveDestinations: [SensorMoveDestination] {
+        categories.flatMap { cat -> [SensorMoveDestination] in
+            var dests = [SensorMoveDestination(categoryId: cat.id, subcategoryId: nil, label: cat.name)]
+            dests += cat.subcategories.map { sub in
+                SensorMoveDestination(categoryId: cat.id, subcategoryId: sub.id,
+                                      label: "\(cat.name) \u{2192} \(sub.name)")
+            }
+            return dests
+        }
+    }
+
+    private func moveSensor(key: String, to dest: SensorMoveDestination) {
+        var sensor: SensorConfig?
+        outer: for i in categories.indices {
+            if let idx = categories[i].sensors.firstIndex(where: { $0.key == key }) {
+                sensor = categories[i].sensors.remove(at: idx)
+                break outer
+            }
+            for j in categories[i].subcategories.indices {
+                if let idx = categories[i].subcategories[j].sensors.firstIndex(where: { $0.key == key }) {
+                    sensor = categories[i].subcategories[j].sensors.remove(at: idx)
+                    break outer
+                }
+            }
+        }
+        guard let sensor else { return }
+        if let catIdx = categories.firstIndex(where: { $0.id == dest.categoryId }) {
+            if let subId = dest.subcategoryId,
+               let subIdx = categories[catIdx].subcategories.firstIndex(where: { $0.id == subId }) {
+                categories[catIdx].subcategories[subIdx].sensors.append(sensor)
+            } else {
+                categories[catIdx].sensors.append(sensor)
+            }
+        }
+    }
+
     private func loadFromConfig() {
         let config = viewModel.config ?? .empty
         url = config.homeAssistantURL
@@ -220,6 +287,7 @@ struct SettingsView: View {
         refreshInterval = config.refreshIntervalSeconds
         fullRefreshInterval = config.fullRefreshIntervalSeconds
         categories = config.categories.isEmpty ? AppConfig.defaultCategories : config.categories
+        menuBarSensorKey = config.menuBarSensorKey ?? config.allSensors.first?.key ?? ""
     }
 
     private func save() {
@@ -229,18 +297,20 @@ struct SettingsView: View {
             refreshIntervalSeconds: refreshInterval,
             fullRefreshIntervalSeconds: fullRefreshInterval,
             historyHours: historyHours,
-            categories: categories
+            categories: categories,
+            menuBarSensorKey: menuBarSensorKey.isEmpty ? nil : menuBarSensorKey
         )
 
         do {
             try ConfigLoader.save(config)
-            saveMessage = "Saved"
+            saveSuccess = true
+            saveError = nil
             viewModel.stopMonitoring()
             viewModel.loadConfig()
             viewModel.startMonitoring()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { saveMessage = nil }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { saveSuccess = false }
         } catch {
-            saveMessage = "Error: \(error.localizedDescription)"
+            saveError = error.localizedDescription
         }
     }
 
@@ -338,7 +408,9 @@ struct SettingsView: View {
 
 private struct CategoryEditorView: View {
     @Binding var category: SensorCategory
+    let destinations: [SensorMoveDestination]
     let onDelete: () -> Void
+    let onMoveSensor: (String, SensorMoveDestination) -> Void
     @State private var isExpanded = true
 
     var body: some View {
@@ -346,16 +418,24 @@ private struct CategoryEditorView: View {
             DisclosureGroup(isExpanded: $isExpanded) {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach($category.sensors) { $sensor in
-                        SensorEditorRow(sensor: $sensor) {
-                            category.sensors.removeAll { $0.key == sensor.key }
-                        }
+                        SensorEditorRow(
+                            sensor: $sensor,
+                            destinations: destinations,
+                            currentLocationId: category.id,
+                            onDelete: { category.sensors.removeAll { $0.key == sensor.key } },
+                            onMove: { dest in onMoveSensor(sensor.key, dest) }
+                        )
                         .padding(.leading, 8)
                     }
 
                     ForEach($category.subcategories) { $sub in
-                        SubcategoryEditorView(subcategory: $sub) {
-                            category.subcategories.removeAll { $0.id == sub.id }
-                        }
+                        SubcategoryEditorView(
+                            subcategory: $sub,
+                            destinations: destinations,
+                            parentCategoryId: category.id,
+                            onDelete: { category.subcategories.removeAll { $0.id == sub.id } },
+                            onMoveSensor: onMoveSensor
+                        )
                     }
 
                     HStack(spacing: 12) {
@@ -413,16 +493,23 @@ private struct CategoryEditorView: View {
 
 private struct SubcategoryEditorView: View {
     @Binding var subcategory: SensorSubcategory
+    let destinations: [SensorMoveDestination]
+    let parentCategoryId: String
     let onDelete: () -> Void
+    let onMoveSensor: (String, SensorMoveDestination) -> Void
     @State private var isExpanded = true
 
     var body: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach($subcategory.sensors) { $sensor in
-                    SensorEditorRow(sensor: $sensor) {
-                        subcategory.sensors.removeAll { $0.key == sensor.key }
-                    }
+                    SensorEditorRow(
+                        sensor: $sensor,
+                        destinations: destinations,
+                        currentLocationId: "\(parentCategoryId)/\(subcategory.id)",
+                        onDelete: { subcategory.sensors.removeAll { $0.key == sensor.key } },
+                        onMove: { dest in onMoveSensor(sensor.key, dest) }
+                    )
                     .padding(.leading, 8)
                 }
 
@@ -465,7 +552,10 @@ private struct SubcategoryEditorView: View {
 
 private struct SensorEditorRow: View {
     @Binding var sensor: SensorConfig
+    let destinations: [SensorMoveDestination]
+    let currentLocationId: String
     let onDelete: () -> Void
+    let onMove: (SensorMoveDestination) -> Void
     @State private var isExpanded = false
 
     private let colorOptions = ["orange", "cyan", "green", "purple", "blue", "red", "yellow", "pink"]
@@ -557,6 +647,19 @@ private struct SensorEditorRow: View {
                 }
 
                 Spacer()
+
+                Menu {
+                    ForEach(destinations.filter { $0.id != currentLocationId }) { dest in
+                        Button(dest.label) { onMove(dest) }
+                    }
+                } label: {
+                    Image(systemName: "folder.badge.arrow.forward")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Move to...")
 
                 Button(role: .destructive, action: onDelete) {
                     Image(systemName: "xmark")
@@ -758,6 +861,18 @@ private struct IconPickerButton: View {
             ("folder", "Folder"),
         ]),
     ]
+}
+
+// MARK: - Move Destination
+
+struct SensorMoveDestination: Identifiable {
+    let categoryId: String
+    let subcategoryId: String?
+    let label: String
+    var id: String {
+        if let subId = subcategoryId { return "\(categoryId)/\(subId)" }
+        return categoryId
+    }
 }
 
 // MARK: - Update Status

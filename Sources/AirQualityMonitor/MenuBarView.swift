@@ -3,11 +3,13 @@ import SwiftUI
 struct MenuBarLabel: View {
     let viewModel: SensorViewModel
 
+    private var sensor: SensorConfig? { viewModel.menuBarSensor }
+
     var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: "aqi.medium")
-            if let co2 = viewModel.currentValue(forKey: "co2") {
-                Text("\(Int(co2))")
+            Image(systemName: sensor?.icon ?? "aqi.medium")
+            if let sensor, let value = viewModel.currentValue(for: sensor) {
+                Text("\(Int(value))")
                     .monospacedDigit()
             }
         }
@@ -32,6 +34,21 @@ struct MenuBarView: View {
                     }
                 }
             }
+            .padding(.vertical, 4)
+
+            Divider()
+
+            Picker("Menu Bar Sensor", selection: Binding(
+                get: { viewModel.config?.menuBarSensorKey ?? viewModel.config?.allSensors.first?.key ?? "" },
+                set: { viewModel.setMenuBarSensorKey($0) }
+            )) {
+                ForEach(viewModel.config?.allSensors ?? []) { sensor in
+                    Text(sensor.name).tag(sensor.key)
+                }
+            }
+            .pickerStyle(.menu)
+            .controlSize(.small)
+            .padding(.horizontal, 16)
             .padding(.vertical, 4)
 
             HStack {

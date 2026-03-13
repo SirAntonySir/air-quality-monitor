@@ -15,7 +15,6 @@ struct ContentView: View {
                 }
         } detail: {
             detailContent
-                .navigationTitle(viewModel.selectionTitle)
                 .toolbar {
                     ToolbarItem(placement: .navigation) {
                         if expandedSensor != nil {
@@ -194,12 +193,41 @@ struct ContentView: View {
                             }
                         }
                         .contentShape(Rectangle())
+                        .contextMenu {
+                            sensorContextMenu(for: sensor)
+                        }
                     }
                 }
                 .padding(spacing)
             }
             .clipped()
             .transition(.opacity)
+        }
+    }
+
+    @ViewBuilder
+    private func sensorContextMenu(for sensor: SensorConfig) -> some View {
+        if let config = viewModel.config {
+            Menu("Move to\u{2026}") {
+                ForEach(config.categories) { cat in
+                    Button(cat.name) {
+                        viewModel.moveSensor(key: sensor.key, toCategoryId: cat.id, subcategoryId: nil)
+                    }
+                    ForEach(cat.subcategories) { sub in
+                        Button("\(cat.name) \u{2192} \(sub.name)") {
+                            viewModel.moveSensor(key: sensor.key, toCategoryId: cat.id, subcategoryId: sub.id)
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            Button(viewModel.config?.menuBarSensorKey == sensor.key
+                   ? "Menu Bar Sensor \u{2713}"
+                   : "Show in Menu Bar") {
+                viewModel.setMenuBarSensorKey(sensor.key)
+            }
         }
     }
 
@@ -235,3 +263,4 @@ struct VisualEffectBackground: NSViewRepresentable {
         nsView.blendingMode = blendingMode
     }
 }
+
