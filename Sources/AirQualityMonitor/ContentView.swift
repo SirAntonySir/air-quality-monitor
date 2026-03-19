@@ -4,6 +4,7 @@ struct ContentView: View {
     @Bindable var viewModel: SensorViewModel
     @State private var expandedSensor: String?
     @State private var sidebarVisibility: NavigationSplitViewVisibility = .automatic
+    @State private var groupedMode = false
     @Namespace private var chartNamespace
 
     var body: some View {
@@ -25,6 +26,30 @@ struct ContentView: View {
                             }
                         }
                     }
+                    ToolbarItem(placement: .automatic) {
+                        Picker("Display", selection: $groupedMode) {
+                            Image(systemName: "square.grid.2x2")
+                                .tag(false)
+                            Image(systemName: "chart.xyaxis.line")
+                                .tag(true)
+                        }
+                        .pickerStyle(.segmented)
+                        .help(groupedMode ? "Combined chart" : "Individual charts")
+                    }
+                    ToolbarItem(placement: .automatic) {
+                        Button {
+                            Task { await viewModel.fetchFullHistory() }
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .help("Refresh all data")
+                    }
+                    ToolbarItem(placement: .automatic) {
+                        SettingsLink {
+                            Image(systemName: "gearshape")
+                        }
+                        .help("Settings")
+                    }
                 }
         }
         .frame(minWidth: 900, minHeight: 550)
@@ -42,21 +67,18 @@ struct ContentView: View {
             set: { applySidebarSelection($0) }
         )) {
             Label("All Sensors", systemImage: "square.grid.2x2")
+                .font(.system(.body, weight: .medium))
                 .tag("__all__")
 
-            ForEach(viewModel.categories) { category in
-                Section {
-                    if !category.sensors.isEmpty {
-                        Label("Uncategorized", systemImage: category.icon)
-                            .tag("cat:\(category.id)")
-                    }
+            ForEach(viewModel.categories.filter { !$0.allSensors.isEmpty }) { category in
+                Label(category.name, systemImage: category.icon)
+                    .font(.system(.body, weight: .medium))
+                    .tag("cat:\(category.id)")
 
-                    ForEach(category.subcategories) { sub in
-                        Label(sub.name, systemImage: sub.icon)
-                            .tag("cat:\(category.id)/sub:\(sub.id)")
-                    }
-                } header: {
-                    Label(category.name, systemImage: category.icon)
+                ForEach(category.subcategories.filter { !$0.sensors.isEmpty }) { sub in
+                    Label(sub.name, systemImage: sub.icon)
+                        .padding(.leading, 12)
+                        .tag("cat:\(category.id)/sub:\(sub.id)")
                 }
             }
         }
@@ -66,7 +88,6 @@ struct ContentView: View {
 
     private var sidebarFooter: some View {
         VStack(spacing: 0) {
-            Divider()
             HStack(spacing: 8) {
                 if let error = viewModel.lastError {
                     Image(systemName: "exclamationmark.triangle")
@@ -87,22 +108,6 @@ struct ContentView: View {
                 }
 
                 Spacer()
-
-                Button {
-                    Task { await viewModel.fetchFullHistory() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.borderless)
-                .controlSize(.small)
-                .help("Refresh all data")
-
-                SettingsLink {
-                    Image(systemName: "gearshape")
-                }
-                .buttonStyle(.borderless)
-                .controlSize(.small)
-                .help("Settings")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -158,7 +163,9 @@ struct ContentView: View {
             SensorChartView(
                 sensor: sensor,
                 readings: viewModel.readings[sensor.entityId] ?? [],
-                isExpanded: true
+                isExpanded: true,
+                showThresholdLines: viewModel.config?.showThresholdLines ?? true,
+                showAverageLine: viewModel.config?.showAverageLine ?? false
             )
             .matchedGeometryEffect(id: sensor.key, in: chartNamespace)
             .padding(spacing)
@@ -172,6 +179,29 @@ struct ContentView: View {
                 systemImage: "sensor",
                 description: Text("Add sensors in Settings to get started.")
             )
+        } else if groupedMode {
+            let grouped = Dictionary(grouping: sensors, by: \.unit)
+            let unitOrder = grouped.keys.sorted()
+            GeometryReader { geo in
+                let count = unitOrder.count
+                let columns = gridColumns(for: count, in: geo.size)
+                let rowCount = Int(ceil(Double(count) / Double(columns.count)))
+                let cellHeight = (geo.size.height - CGFloat(rowCount + 1) * spacing) / CGFloat(rowCount)
+
+                LazyVGrid(columns: columns, spacing: spacing) {
+                    ForEach(unitOrder, id: \.self) { unit in
+                        GroupedChartView(
+                            sensors: grouped[unit] ?? [],
+                            readings: viewModel.readings,
+                            showAverageLine: viewModel.config?.showAverageLine ?? false
+                        )
+                        .frame(height: max(cellHeight, 200))
+                    }
+                }
+                .padding(spacing)
+            }
+            .clipped()
+            .transition(.opacity)
         } else {
             GeometryReader { geo in
                 let columns = gridColumns(for: sensors.count, in: geo.size)
@@ -183,7 +213,9 @@ struct ContentView: View {
                         SensorChartView(
                             sensor: sensor,
                             readings: viewModel.readings[sensor.entityId] ?? [],
-                            isExpanded: false
+                            isExpanded: false,
+                            showThresholdLines: viewModel.config?.showThresholdLines ?? true,
+                            showAverageLine: viewModel.config?.showAverageLine ?? false
                         )
                         .matchedGeometryEffect(id: sensor.key, in: chartNamespace)
                         .frame(height: max(cellHeight, 150))

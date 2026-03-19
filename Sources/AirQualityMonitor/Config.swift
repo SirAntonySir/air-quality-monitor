@@ -11,6 +11,8 @@ struct AppConfig: Codable {
     var historyHours: Int
     var categories: [SensorCategory]
     var menuBarSensorKey: String?
+    var showThresholdLines: Bool
+    var showAverageLine: Bool
 
     /// All sensors across all categories and subcategories (for fetching)
     var allSensors: [SensorConfig] {
@@ -24,11 +26,12 @@ struct AppConfig: Codable {
     enum CodingKeys: String, CodingKey {
         case homeAssistantURL, token, refreshIntervalSeconds, fullRefreshIntervalSeconds, historyHours
         case categories, sensors, menuBarSensorKey // "sensors" for legacy format
+        case showThresholdLines, showAverageLine
     }
 
     init(homeAssistantURL: String, token: String, refreshIntervalSeconds: Int,
          fullRefreshIntervalSeconds: Int, historyHours: Int, categories: [SensorCategory],
-         menuBarSensorKey: String? = nil) {
+         menuBarSensorKey: String? = nil, showThresholdLines: Bool = true, showAverageLine: Bool = false) {
         self.homeAssistantURL = homeAssistantURL
         self.token = token
         self.refreshIntervalSeconds = refreshIntervalSeconds
@@ -36,6 +39,8 @@ struct AppConfig: Codable {
         self.historyHours = historyHours
         self.categories = categories
         self.menuBarSensorKey = menuBarSensorKey
+        self.showThresholdLines = showThresholdLines
+        self.showAverageLine = showAverageLine
     }
 
     init(from decoder: Decoder) throws {
@@ -47,6 +52,8 @@ struct AppConfig: Codable {
         historyHours = try container.decode(Int.self, forKey: .historyHours)
 
         menuBarSensorKey = try container.decodeIfPresent(String.self, forKey: .menuBarSensorKey)
+        showThresholdLines = try container.decodeIfPresent(Bool.self, forKey: .showThresholdLines) ?? true
+        showAverageLine = try container.decodeIfPresent(Bool.self, forKey: .showAverageLine) ?? false
 
         // Try new format first, fall back to legacy flat sensors
         if let cats = try? container.decode([SensorCategory].self, forKey: .categories) {
@@ -76,6 +83,8 @@ struct AppConfig: Codable {
         try container.encode(historyHours, forKey: .historyHours)
         try container.encode(categories, forKey: .categories)
         try container.encodeIfPresent(menuBarSensorKey, forKey: .menuBarSensorKey)
+        try container.encode(showThresholdLines, forKey: .showThresholdLines)
+        try container.encode(showAverageLine, forKey: .showAverageLine)
     }
 
     static let defaultCategories: [SensorCategory] = [
@@ -95,7 +104,7 @@ struct AppConfig: Codable {
                                      color: "green", thresholdMin: nil, thresholdMax: 1000),
                         SensorConfig(key: "pm25", entityId: "sensor.alpstuga_air_quality_monitor_pm2_5",
                                      name: "PM2.5", unit: "\u{00b5}g/m\u{00b3}", icon: "smoke",
-                                     color: "purple", thresholdMin: nil, thresholdMax: 25),
+                                     color: "purple", thresholdMin: nil, thresholdMax: 25, filterOutliers: true),
                     ]
                 )
             ]
@@ -170,6 +179,7 @@ struct SensorConfig: Codable, Identifiable {
     var color: String
     var thresholdMin: Double?
     var thresholdMax: Double?
+    var filterOutliers: Bool?
 
     var id: String { key }
 

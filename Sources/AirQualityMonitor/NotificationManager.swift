@@ -1,8 +1,7 @@
 import Foundation
 import UserNotifications
 
-@MainActor
-final class NotificationManager {
+final class NotificationManager: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
     static let shared = NotificationManager()
 
     /// Tracks whether each sensor was last known to be out of range
@@ -12,31 +11,62 @@ final class NotificationManager {
     private var cooldownUntil: [String: Date] = [:]
 
     private let cooldownInterval: TimeInterval = 300 // 5 minutes
+    private let lock = NSLock()
 
-    private init() {}
+    private override init() {
+        super.init()
+        UNUserNotificationCenter.current().delegate = self
+    }
 
     func requestPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            if let error {
+                print("[Notifications] Permission error: \(error.localizedDescription)")
+            } else {
+                print("[Notifications] Permission \(granted ? "granted" : "denied")")
+            }
+        }
+    }
+
+    // MARK: - UNUserNotificationCenterDelegate
+
+    /// Show notifications even when the app is in the foreground
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound])
     }
 
     /// Check a new reading against thresholds and notify on state transitions.
     /// Call this only during incremental polls, not full history loads.
     func checkReading(_ reading: SensorReading, sensor: SensorConfig) {
         let isOut = sensor.isOutOfRange(reading.value)
-        let wasOut = wasOutOfRange[sensor.entityId]
 
-        // Update tracked state
+        lock.lock()
+        let wasOut = wasOutOfRange[sensor.entityId]
         wasOutOfRange[sensor.entityId] = isOut
 
         // Skip if this is the first reading (no previous state to compare)
-        guard let wasOut else { return }
+        guard let wasOut else {
+            lock.unlock()
+            return
+        }
 
         // Only notify on transitions
-        guard isOut != wasOut else { return }
+        guard isOut != wasOut else {
+            lock.unlock()
+            return
+        }
 
         // Respect cooldown
-        if let until = cooldownUntil[sensor.entityId], Date() < until { return }
+        if let until = cooldownUntil[sensor.entityId], Date() < until {
+            lock.unlock()
+            return
+        }
         cooldownUntil[sensor.entityId] = Date().addingTimeInterval(cooldownInterval)
+        lock.unlock()
 
         if isOut {
             sendOutOfRangeNotification(sensor: sensor, value: reading.value)
@@ -48,11 +78,13 @@ final class NotificationManager {
     /// Seed initial state from current readings so the first poll doesn't
     /// spuriously fire notifications.
     func seedState(readings: [String: [SensorReading]], sensors: [SensorConfig]) {
+        lock.lock()
         for sensor in sensors {
             if let last = readings[sensor.entityId]?.last {
                 wasOutOfRange[sensor.entityId] = sensor.isOutOfRange(last.value)
             }
         }
+        lock.unlock()
     }
 
     // MARK: - Private
@@ -79,7 +111,11 @@ final class NotificationManager {
             content: content,
             trigger: nil
         )
-        UNUserNotificationCenter.current().add(request)
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error {
+                print("[Notifications] Send error: \(error.localizedDescription)")
+            }
+        }
     }
 
     private func thresholdMessage(sensor: SensorConfig, value: Double) -> String {

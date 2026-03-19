@@ -10,6 +10,8 @@ struct SettingsView: View {
     @State private var fullRefreshInterval: Int = 900
     @State private var categories: [SensorCategory] = []
     @State private var menuBarSensorKey: String = ""
+    @State private var showThresholdLines: Bool = true
+    @State private var showAverageLine: Bool = false
     @State private var saveSuccess = false
     @State private var saveError: String?
     @State private var testResult: String?
@@ -74,6 +76,13 @@ struct SettingsView: View {
                 Stepper("Full refresh: \(fullRefreshInterval / 60) min", value: $fullRefreshInterval, in: 60...3600, step: 60)
             } header: {
                 Text("Refresh")
+            }
+
+            Section {
+                Toggle("Show threshold lines", isOn: $showThresholdLines)
+                Toggle("Show average line", isOn: $showAverageLine)
+            } header: {
+                Text("Display")
             }
 
             HStack {
@@ -288,6 +297,8 @@ struct SettingsView: View {
         fullRefreshInterval = config.fullRefreshIntervalSeconds
         categories = config.categories.isEmpty ? AppConfig.defaultCategories : config.categories
         menuBarSensorKey = config.menuBarSensorKey ?? config.allSensors.first?.key ?? ""
+        showThresholdLines = config.showThresholdLines
+        showAverageLine = config.showAverageLine
     }
 
     private func save() {
@@ -298,7 +309,9 @@ struct SettingsView: View {
             fullRefreshIntervalSeconds: fullRefreshInterval,
             historyHours: historyHours,
             categories: categories,
-            menuBarSensorKey: menuBarSensorKey.isEmpty ? nil : menuBarSensorKey
+            menuBarSensorKey: menuBarSensorKey.isEmpty ? nil : menuBarSensorKey,
+            showThresholdLines: showThresholdLines,
+            showAverageLine: showAverageLine
         )
 
         do {

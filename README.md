@@ -25,11 +25,16 @@ Built with SwiftUI and Swift Charts. Runs as both a windowed app and a menu bar 
 
 ## Features
 
-- **Live charts** for Temperature, Humidity, CO2, and PM2.5 with 12-hour history
-- **Threshold indicators** — lines turn red when values exceed safe ranges, with dashed boundary markers
+- **Live charts** for Temperature, Humidity, CO2, PM2.5, and any other HA sensor with configurable history window
+- **Categories & subcategories** — organize sensors by room or type with custom icons via a sidebar navigation
+- **Threshold indicators** — lines turn red when values exceed safe ranges, with dashed boundary markers (toggleable)
+- **Average line** — displays the calculated average for the visible time period on each chart (toggleable)
+- **Smart outlier filtering** — filters isolated sensor glitches (e.g. PM2.5 spikes) while preserving sustained elevated readings
 - **Interactive hover** — crosshair tooltip shows exact value and timestamp at cursor position
 - **Click to expand** — click any chart to view it full-screen, click again to return
-- **Menu bar widget** — always-visible CO2 reading in the menu bar with a popover showing all sensors
+- **Grouped chart mode** — toggle between individual charts and combined charts grouped by unit
+- **Menu bar widget** — configurable sensor reading in the menu bar with a popover showing all sensors
+- **Threshold notifications** — macOS notifications when sensor values go out of range (with 5-minute cooldown)
 - **Translucent glass UI** — macOS vibrancy effects for a native look
 - **Portable config** — JSON configuration file, easy to copy between machines
 - **Self-update** — check for and install updates from the app (git-based)
@@ -67,7 +72,7 @@ Open `Package.swift` in Xcode to build and run from the IDE.
 
 ## Configuration
 
-On first launch, the app opens the Settings window (also accessible via **Cmd+,** or the gear icon).
+On first launch, the app opens the Settings window (also accessible via **Cmd+,** or the gear icon in the toolbar).
 
 ### Connection setup
 
@@ -75,7 +80,8 @@ On first launch, the app opens the Settings window (also accessible via **Cmd+,*
 2. Enter your Home Assistant URL (e.g., `http://192.168.178.120:8123`)
 3. Paste a **long-lived access token** (create one in HA: *Profile > Security > Create Token*)
 4. Click **Test Connection** to verify
-5. Click **Save**
+5. Adjust display options (show/hide threshold lines and average line)
+6. Click **Save**
 
 ### Config file
 
@@ -86,6 +92,12 @@ Settings are stored at:
 ```
 
 To set up on another machine, copy this file and update the URL/token. A template is also available at `config.example.json`.
+
+### Sensor organization
+
+Sensors can be organized into **categories** and **subcategories** (e.g., rooms) via **Settings > Sensors**. Each category and subcategory can have a custom name and SF Symbol icon. The sidebar only shows categories that contain sensors.
+
+You can also drag sensors between categories using the context menu in the main view or the move button in Settings.
 
 ### Sensor configuration
 
@@ -98,7 +110,11 @@ The app ships with default entity IDs for the IKEA ALPSTUGA:
 | CO2 | `sensor.alpstuga_air_quality_monitor_carbon_dioxide` | max 1000 ppm |
 | PM2.5 | `sensor.alpstuga_air_quality_monitor_pm2_5` | max 25 µg/m³ |
 
-Entity IDs and thresholds can be changed in **Settings > Sensors** or by editing `config.json` directly.
+Entity IDs, thresholds, colors, and icons can be changed in **Settings > Sensors** or by editing `config.json` directly.
+
+### Outlier filtering
+
+For sensors prone to occasional glitches (e.g., PM2.5), enable `"filterOutliers": true` in the sensor config. The filter uses a rolling median window to detect isolated spikes and removes them, while preserving sustained elevated readings (3+ consecutive readings) that may represent real events like cooking or traffic.
 
 ### Using with other sensors
 
@@ -114,11 +130,13 @@ This app works with **any Home Assistant sensor**, not just the ALPSTUGA. Change
 │  (@Observable)      (async)         │     Home Assistant REST API
 │       │                             │
 │  ┌────┴──────────────────────┐      │
-│  │ 4× SensorChartView       │      │
+│  │ Sidebar (categories)      │      │
+│  │ N× SensorChartView       │      │
 │  │ (Swift Charts + hover)    │      │
 │  └───────────────────────────┘      │
 │                                     │
 │  MenuBarExtra (always visible)      │
+│  NotificationManager (alerts)       │
 └─────────────────────────────────────┘
 ```
 
@@ -133,6 +151,10 @@ This app works with **any Home Assistant sensor**, not just the ALPSTUGA. Change
 
 When a sensor value crosses a threshold boundary, the app interpolates the exact crossing point and splits the line into colored segments — green/blue/orange/purple within range, red outside. This gives clean, accurate color transitions at the boundary lines.
 
+### Notifications
+
+When a sensor value transitions from in-range to out-of-range (or vice versa), a macOS notification is sent. Notifications have a 5-minute cooldown per sensor to avoid spam. The initial state is seeded from history data so the first poll doesn't trigger false alerts.
+
 ## Project structure
 
 ```
@@ -142,14 +164,15 @@ When a sensor value crosses a threshold boundary, the app interpolates the exact
 ├── config.example.json                  # Config template
 └── Sources/AirQualityMonitor/
     ├── AirQualityMonitorApp.swift        # App entry + MenuBarExtra + Settings scenes
-    ├── Config.swift                      # AppConfig model, ConfigLoader (read/write JSON)
-    ├── Models.swift                      # SensorReading, TaggedPoint, threshold interpolation
+    ├── Config.swift                      # AppConfig model, categories, ConfigLoader
+    ├── Models.swift                      # SensorReading, TaggedPoint, outlier filter, threshold interpolation
     ├── HAClient.swift                    # Home Assistant REST API client
     ├── SensorViewModel.swift             # @Observable view model, polling logic
-    ├── ContentView.swift                 # Main window layout, expand/collapse, glass background
-    ├── SensorChartView.swift             # Swift Charts with threshold coloring + hover
+    ├── ContentView.swift                 # Sidebar, chart grid, expand/collapse, glass background
+    ├── SensorChartView.swift             # Swift Charts with threshold coloring, average line, hover
     ├── MenuBarView.swift                 # Menu bar icon + popover
-    ├── SettingsView.swift                # Preferences (connection, sensors, about/updates)
+    ├── SettingsView.swift                # Preferences (connection, display, sensors, categories, about/updates)
+    ├── NotificationManager.swift         # Threshold notifications with cooldown
     └── AppVersion.swift                  # Version constant + git-based update check
 ```
 

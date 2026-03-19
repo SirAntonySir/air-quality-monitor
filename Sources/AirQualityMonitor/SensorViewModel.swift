@@ -89,11 +89,6 @@ final class SensorViewModel {
         readings[sensor.entityId]?.last?.value
     }
 
-    func currentValue(forKey key: String) -> Double? {
-        guard let sensor = config?.allSensors.first(where: { $0.key == key }) else { return nil }
-        return readings[sensor.entityId]?.last?.value
-    }
-
     func setMenuBarSensorKey(_ key: String?) {
         guard var cfg = config else { return }
         cfg.menuBarSensorKey = key
@@ -196,29 +191,41 @@ final class SensorViewModel {
     private func fetchLatestStates() async {
         guard let config, let client else { return }
 
-        do {
-            for sensor in config.allSensors {
-                if let reading = try await client.fetchCurrentState(entityId: sensor.entityId) {
-                    var current = readings[sensor.entityId] ?? []
-
-                    if let last = current.last, last.date == reading.date {
-                        continue
-                    }
-
-                    current.append(reading)
-
-                    let cutoff = Date().addingTimeInterval(-Double(config.historyHours) * 3600)
-                    current.removeAll { $0.date < cutoff }
-
-                    readings[sensor.entityId] = current
-
-                    NotificationManager.shared.checkReading(reading, sensor: sensor)
+        let sensors = config.allSensors
+        let results = await withTaskGroup(of: (SensorConfig, SensorReading?).self) { group in
+            for sensor in sensors {
+                group.addTask {
+                    let reading = try? await client.fetchCurrentState(entityId: sensor.entityId)
+                    return (sensor, reading)
                 }
             }
+            var collected: [(SensorConfig, SensorReading?)] = []
+            for await result in group {
+                collected.append(result)
+            }
+            return collected
+        }
+
+        let cutoff = Date().addingTimeInterval(-Double(config.historyHours) * 3600)
+        var anyUpdated = false
+
+        for (sensor, reading) in results {
+            guard let reading else { continue }
+
+            var current = readings[sensor.entityId] ?? []
+            if let last = current.last, last.date == reading.date { continue }
+
+            current.append(reading)
+            current.removeAll { $0.date < cutoff }
+            readings[sensor.entityId] = current
+            anyUpdated = true
+
+            NotificationManager.shared.checkReading(reading, sensor: sensor)
+        }
+
+        if anyUpdated {
             lastError = nil
             lastUpdated = Date()
-        } catch {
-            lastError = error.localizedDescription
         }
     }
 }

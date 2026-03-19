@@ -1,8 +1,8 @@
 import Foundation
 
 enum AppVersion {
-    static let current = "1.0.0"
-    static let build = "1"
+    static let current = "1.1.0"
+    static let build = "2"
 
     static var formatted: String { "v\(current) (\(build))" }
 
