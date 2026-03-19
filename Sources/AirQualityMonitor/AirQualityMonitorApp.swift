@@ -17,6 +17,7 @@ struct AirQualityMonitorApp: App {
                 }
             }
             .onAppear {
+                NotificationManager.shared.requestPermission()
                 viewModel.loadConfig()
                 viewModel.startMonitoring()
             }

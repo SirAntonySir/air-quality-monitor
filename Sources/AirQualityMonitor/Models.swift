@@ -49,6 +49,69 @@ extension JSONDecoder {
 }
 
 enum ChartDataProcessor {
+    /// Filters out isolated outlier spikes while preserving sustained elevated readings.
+    ///
+    /// Uses a rolling median window to detect values that deviate significantly from
+    /// their surroundings. Short runs of elevated values (< `minRunLength`) are treated
+    /// as sensor glitches and removed. Longer runs are kept — they likely represent
+    /// real events (cooking, traffic, etc.).
+    static func filterOutliers(
+        from readings: [SensorReading],
+        minRunLength: Int = 3,
+        windowSize: Int = 24
+    ) -> [SensorReading] {
+        guard readings.count > minRunLength else { return readings }
+
+        // Use a wide window so dense spike clusters don't pollute the median
+        let halfWindow = windowSize / 2
+        var elevated = [Bool](repeating: false, count: readings.count)
+
+        // Pre-sort all values to compute a global baseline for edge cases
+        let allValues = readings.map(\.value).sorted()
+        let globalMedian = allValues[allValues.count / 2]
+
+        for i in 0..<readings.count {
+            let start = max(0, i - halfWindow)
+            let end = min(readings.count - 1, i + halfWindow)
+
+            var neighbors: [Double] = []
+            for j in start...end where j != i {
+                neighbors.append(readings[j].value)
+            }
+            guard !neighbors.isEmpty else { continue }
+            neighbors.sort()
+            let median = neighbors[neighbors.count / 2]
+
+            // Use the lower of local and global median to avoid clusters raising the baseline
+            let baseline = min(median, globalMedian)
+            let value = readings[i].value
+            // Elevated if value is more than 3x the baseline AND at least 15 units above it
+            elevated[i] = value > baseline * 3 && value > baseline + 15
+        }
+
+        // Find runs of elevated readings — short runs are outliers, long runs are real
+        var keep = [Bool](repeating: true, count: readings.count)
+        var i = 0
+        while i < readings.count {
+            if elevated[i] {
+                var runEnd = i
+                while runEnd + 1 < readings.count && elevated[runEnd + 1] {
+                    runEnd += 1
+                }
+                if runEnd - i + 1 < minRunLength {
+                    for j in i...runEnd {
+                        keep[j] = false
+                    }
+                }
+                i = runEnd + 1
+            } else {
+                i += 1
+            }
+        }
+
+        return zip(readings, keep).compactMap { $0.1 ? $0.0 : nil }
+    }
+
     static func buildTaggedPoints(
         from readings: [SensorReading],
         sensor: SensorConfig

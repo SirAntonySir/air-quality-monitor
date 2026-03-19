@@ -3,11 +3,13 @@ import SwiftUI
 struct MenuBarLabel: View {
     let viewModel: SensorViewModel
 
+    private var sensor: SensorConfig? { viewModel.menuBarSensor }
+
     var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: "aqi.medium")
-            if let co2 = viewModel.currentValue(forKey: "co2") {
-                Text("\(Int(co2))")
+            Image(systemName: sensor?.icon ?? "aqi.medium")
+            if let sensor, let value = viewModel.currentValue(for: sensor) {
+                Text("\(Int(value))")
                     .monospacedDigit()
             }
         }
@@ -26,10 +28,27 @@ struct MenuBarView: View {
                 .padding(.bottom, 8)
 
             VStack(spacing: 2) {
-                ForEach(viewModel.sensorConfigs) { sensor in
-                    MenuBarSensorRow(sensor: sensor, viewModel: viewModel)
+                ForEach(viewModel.categories) { category in
+                    if !category.allSensors.isEmpty {
+                        MenuBarCategorySection(category: category, viewModel: viewModel)
+                    }
                 }
             }
+            .padding(.vertical, 4)
+
+            Divider()
+
+            Picker("Menu Bar Sensor", selection: Binding(
+                get: { viewModel.config?.menuBarSensorKey ?? viewModel.config?.allSensors.first?.key ?? "" },
+                set: { viewModel.setMenuBarSensorKey($0) }
+            )) {
+                ForEach(viewModel.config?.allSensors ?? []) { sensor in
+                    Text(sensor.name).tag(sensor.key)
+                }
+            }
+            .pickerStyle(.menu)
+            .controlSize(.small)
+            .padding(.horizontal, 16)
             .padding(.vertical, 4)
 
             HStack {
@@ -57,7 +76,49 @@ struct MenuBarView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
         }
-        .frame(width: 260)
+        .frame(width: 280)
+    }
+}
+
+private struct MenuBarCategorySection: View {
+    let category: SensorCategory
+    let viewModel: SensorViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            // Category header
+            HStack(spacing: 6) {
+                Image(systemName: category.icon)
+                Text(category.name)
+                    .font(.system(.caption, design: .rounded, weight: .semibold))
+            }
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, 16)
+            .padding(.top, 4)
+
+            // Direct sensors
+            ForEach(category.sensors) { sensor in
+                MenuBarSensorRow(sensor: sensor, viewModel: viewModel)
+            }
+
+            // Subcategory sensors
+            ForEach(category.subcategories) { sub in
+                if !sub.sensors.isEmpty {
+                    HStack(spacing: 4) {
+                        Image(systemName: sub.icon)
+                        Text(sub.name)
+                            .font(.system(.caption2, design: .rounded))
+                    }
+                    .foregroundStyle(.quaternary)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 2)
+
+                    ForEach(sub.sensors) { sensor in
+                        MenuBarSensorRow(sensor: sensor, viewModel: viewModel)
+                    }
+                }
+            }
+        }
     }
 }
 

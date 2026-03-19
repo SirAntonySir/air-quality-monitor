@@ -11,11 +11,49 @@ final class SensorViewModel {
     var config: AppConfig?
     var configLoaded = false
 
+    /// Currently selected category in sidebar
+    var selectedCategoryId: String?
+    /// Currently selected subcategory (nil = show all in category)
+    var selectedSubcategoryId: String?
+
     private var client: HAClient?
     private var monitoringTask: Task<Void, Never>?
     private var fullRefreshTask: Task<Void, Never>?
 
-    var sensorConfigs: [SensorConfig] { config?.sensors ?? [] }
+    var categories: [SensorCategory] { config?.categories ?? [] }
+
+    /// Sensors to display based on current selection
+    var visibleSensors: [SensorConfig] {
+        guard let config else { return [] }
+
+        guard let catId = selectedCategoryId,
+              let category = config.categories.first(where: { $0.id == catId }) else {
+            // No selection: show all sensors
+            return config.allSensors
+        }
+
+        if let subId = selectedSubcategoryId,
+           let sub = category.subcategories.first(where: { $0.id == subId }) {
+            return sub.sensors
+        }
+
+        return category.allSensors
+    }
+
+    /// Title for the current selection
+    var selectionTitle: String {
+        guard let catId = selectedCategoryId,
+              let category = config?.categories.first(where: { $0.id == catId }) else {
+            return "All Sensors"
+        }
+
+        if let subId = selectedSubcategoryId,
+           let sub = category.subcategories.first(where: { $0.id == subId }) {
+            return sub.name
+        }
+
+        return category.name
+    }
 
     var hasConfig: Bool { config != nil }
 
@@ -28,6 +66,10 @@ final class SensorViewModel {
             let loaded = try ConfigLoader.load()
             config = loaded
             client = HAClient(baseURL: loaded.homeAssistantURL, token: loaded.token)
+            // Auto-select first category
+            if selectedCategoryId == nil {
+                selectedCategoryId = loaded.categories.first?.id
+            }
             configLoaded = true
         } catch {
             lastError = "Config error: \(error.localizedDescription)"
@@ -35,13 +77,55 @@ final class SensorViewModel {
         }
     }
 
+    var menuBarSensor: SensorConfig? {
+        guard let config else { return nil }
+        if let key = config.menuBarSensorKey {
+            return config.allSensors.first { $0.key == key }
+        }
+        return config.allSensors.first
+    }
+
     func currentValue(for sensor: SensorConfig) -> Double? {
         readings[sensor.entityId]?.last?.value
     }
 
-    func currentValue(forKey key: String) -> Double? {
-        guard let sensor = config?.sensors.first(where: { $0.key == key }) else { return nil }
-        return readings[sensor.entityId]?.last?.value
+    func setMenuBarSensorKey(_ key: String?) {
+        guard var cfg = config else { return }
+        cfg.menuBarSensorKey = key
+        config = cfg
+        try? ConfigLoader.save(cfg)
+    }
+
+    func moveSensor(key: String, toCategoryId: String, subcategoryId: String?) {
+        guard var cfg = config else { return }
+
+        var sensorToMove: SensorConfig?
+        outer: for i in cfg.categories.indices {
+            if let idx = cfg.categories[i].sensors.firstIndex(where: { $0.key == key }) {
+                sensorToMove = cfg.categories[i].sensors.remove(at: idx)
+                break outer
+            }
+            for j in cfg.categories[i].subcategories.indices {
+                if let idx = cfg.categories[i].subcategories[j].sensors.firstIndex(where: { $0.key == key }) {
+                    sensorToMove = cfg.categories[i].subcategories[j].sensors.remove(at: idx)
+                    break outer
+                }
+            }
+        }
+
+        guard let sensor = sensorToMove else { return }
+
+        if let catIdx = cfg.categories.firstIndex(where: { $0.id == toCategoryId }) {
+            if let subId = subcategoryId,
+               let subIdx = cfg.categories[catIdx].subcategories.firstIndex(where: { $0.id == subId }) {
+                cfg.categories[catIdx].subcategories[subIdx].sensors.append(sensor)
+            } else {
+                cfg.categories[catIdx].sensors.append(sensor)
+            }
+        }
+
+        config = cfg
+        try? ConfigLoader.save(cfg)
     }
 
     func startMonitoring() {
@@ -51,11 +135,9 @@ final class SensorViewModel {
         fullRefreshTask?.cancel()
 
         monitoringTask = Task {
-            // Brief delay on launch to let the network stack initialize
             try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled else { return }
 
-            // Retry initial fetch up to 3 times
             for attempt in 0..<3 {
                 await fetchFullHistory()
                 if lastError == nil { break }
@@ -93,13 +175,14 @@ final class SensorViewModel {
         defer { isLoading = false }
 
         do {
-            let entityIds = config.sensors.map(\.entityId)
+            let entityIds = config.allSensors.map(\.entityId)
             let history = try await client.fetchHistory(entityIds: entityIds, hours: config.historyHours)
             for (entityId, data) in history {
                 readings[entityId] = data
             }
             lastError = nil
             lastUpdated = Date()
+            NotificationManager.shared.seedState(readings: readings, sensors: config.allSensors)
         } catch {
             lastError = error.localizedDescription
         }
@@ -108,27 +191,41 @@ final class SensorViewModel {
     private func fetchLatestStates() async {
         guard let config, let client else { return }
 
-        do {
-            for sensor in config.sensors {
-                if let reading = try await client.fetchCurrentState(entityId: sensor.entityId) {
-                    var current = readings[sensor.entityId] ?? []
-
-                    if let last = current.last, last.date == reading.date {
-                        continue
-                    }
-
-                    current.append(reading)
-
-                    let cutoff = Date().addingTimeInterval(-Double(config.historyHours) * 3600)
-                    current.removeAll { $0.date < cutoff }
-
-                    readings[sensor.entityId] = current
+        let sensors = config.allSensors
+        let results = await withTaskGroup(of: (SensorConfig, SensorReading?).self) { group in
+            for sensor in sensors {
+                group.addTask {
+                    let reading = try? await client.fetchCurrentState(entityId: sensor.entityId)
+                    return (sensor, reading)
                 }
             }
+            var collected: [(SensorConfig, SensorReading?)] = []
+            for await result in group {
+                collected.append(result)
+            }
+            return collected
+        }
+
+        let cutoff = Date().addingTimeInterval(-Double(config.historyHours) * 3600)
+        var anyUpdated = false
+
+        for (sensor, reading) in results {
+            guard let reading else { continue }
+
+            var current = readings[sensor.entityId] ?? []
+            if let last = current.last, last.date == reading.date { continue }
+
+            current.append(reading)
+            current.removeAll { $0.date < cutoff }
+            readings[sensor.entityId] = current
+            anyUpdated = true
+
+            NotificationManager.shared.checkReading(reading, sensor: sensor)
+        }
+
+        if anyUpdated {
             lastError = nil
             lastUpdated = Date()
-        } catch {
-            lastError = error.localizedDescription
         }
     }
 }

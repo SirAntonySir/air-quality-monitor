@@ -3,133 +3,280 @@ import SwiftUI
 struct ContentView: View {
     @Bindable var viewModel: SensorViewModel
     @State private var expandedSensor: String?
+    @State private var sidebarVisibility: NavigationSplitViewVisibility = .automatic
+    @State private var groupedMode = false
     @Namespace private var chartNamespace
 
     var body: some View {
-        VStack(spacing: 0) {
-            toolbar
-            GeometryReader { geo in
-                chartLayout(in: geo.size)
-                    .padding()
-            }
+        NavigationSplitView(columnVisibility: $sidebarVisibility) {
+            sidebarContent
+                .navigationSplitViewColumnWidth(min: 160, ideal: 200, max: 260)
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    sidebarFooter
+                }
+        } detail: {
+            detailContent
+                .toolbar {
+                    ToolbarItem(placement: .navigation) {
+                        if expandedSensor != nil {
+                            Button {
+                                withAnimation(.spring(duration: 0.35)) { expandedSensor = nil }
+                            } label: {
+                                Label("Back", systemImage: "chevron.left")
+                            }
+                        }
+                    }
+                    ToolbarItem(placement: .automatic) {
+                        Picker("Display", selection: $groupedMode) {
+                            Image(systemName: "square.grid.2x2")
+                                .tag(false)
+                            Image(systemName: "chart.xyaxis.line")
+                                .tag(true)
+                        }
+                        .pickerStyle(.segmented)
+                        .help(groupedMode ? "Combined chart" : "Individual charts")
+                    }
+                    ToolbarItem(placement: .automatic) {
+                        Button {
+                            Task { await viewModel.fetchFullHistory() }
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .help("Refresh all data")
+                    }
+                    ToolbarItem(placement: .automatic) {
+                        SettingsLink {
+                            Image(systemName: "gearshape")
+                        }
+                        .help("Settings")
+                    }
+                }
         }
         .frame(minWidth: 900, minHeight: 550)
         .background {
-            VisualEffectBackground(material: .hudWindow, blendingMode: .behindWindow)
+            VisualEffectBackground(material: .underWindowBackground, blendingMode: .behindWindow)
                 .ignoresSafeArea()
         }
-        .toolbarBackground(.hidden, for: .windowToolbar)
-        .containerBackground(.clear, for: .window)
     }
 
-    private var toolbar: some View {
-        HStack {
-            if expandedSensor != nil {
-                Button {
-                    withAnimation(.spring(duration: 0.35)) { expandedSensor = nil }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.left")
-                        Text("All Sensors")
-                    }
+    // MARK: - Sidebar
+
+    private var sidebarContent: some View {
+        List(selection: Binding(
+            get: { sidebarSelection },
+            set: { applySidebarSelection($0) }
+        )) {
+            Label("All Sensors", systemImage: "square.grid.2x2")
+                .font(.system(.body, weight: .medium))
+                .tag("__all__")
+
+            ForEach(viewModel.categories.filter { !$0.allSensors.isEmpty }) { category in
+                Label(category.name, systemImage: category.icon)
+                    .font(.system(.body, weight: .medium))
+                    .tag("cat:\(category.id)")
+
+                ForEach(category.subcategories.filter { !$0.sensors.isEmpty }) { sub in
+                    Label(sub.name, systemImage: sub.icon)
+                        .padding(.leading, 12)
+                        .tag("cat:\(category.id)/sub:\(sub.id)")
                 }
-                .buttonStyle(.borderless)
             }
-
-            Text("Air Quality Monitor")
-                .font(.system(.title3, design: .rounded, weight: .semibold))
-
-            Spacer()
-
-            if let error = viewModel.lastError {
-                Label(error, systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .lineLimit(1)
-            }
-
-            if viewModel.isLoading {
-                ProgressView()
-                    .controlSize(.small)
-            }
-
-            if let updated = viewModel.lastUpdated {
-                Text("Updated \(updated, style: .relative) ago")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Button {
-                Task { await viewModel.fetchFullHistory() }
-            } label: {
-                Image(systemName: "arrow.clockwise")
-            }
-            .buttonStyle(.borderless)
-            .help("Refresh all data")
-
-            SettingsLink {
-                Image(systemName: "gearshape")
-            }
-            .buttonStyle(.borderless)
-            .help("Settings")
         }
-        .padding(.horizontal)
-        .padding(.vertical, 10)
+        .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
     }
+
+    private var sidebarFooter: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                if let error = viewModel.lastError {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundStyle(.red)
+                        .font(.caption)
+                        .help(error)
+                }
+
+                if viewModel.isLoading {
+                    ProgressView()
+                        .controlSize(.mini)
+                }
+
+                if let updated = viewModel.lastUpdated {
+                    Text("Updated \(updated, style: .relative) ago")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
+    }
+
+    private var sidebarSelection: String? {
+        guard let catId = viewModel.selectedCategoryId else {
+            return "__all__"
+        }
+        if let subId = viewModel.selectedSubcategoryId {
+            return "cat:\(catId)/sub:\(subId)"
+        }
+        return "cat:\(catId)"
+    }
+
+    private func applySidebarSelection(_ tag: String?) {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            expandedSensor = nil
+
+            guard let tag else {
+                viewModel.selectedCategoryId = nil
+                viewModel.selectedSubcategoryId = nil
+                return
+            }
+
+            if tag == "__all__" {
+                viewModel.selectedCategoryId = nil
+                viewModel.selectedSubcategoryId = nil
+            } else if tag.contains("/sub:") {
+                let parts = tag.split(separator: "/")
+                let catId = String(parts[0].dropFirst(4))
+                let subId = String(parts[1].dropFirst(4))
+                viewModel.selectedCategoryId = catId
+                viewModel.selectedSubcategoryId = subId
+            } else if tag.hasPrefix("cat:") {
+                let catId = String(tag.dropFirst(4))
+                viewModel.selectedCategoryId = catId
+                viewModel.selectedSubcategoryId = nil
+            }
+        }
+    }
+
+    // MARK: - Detail Content
 
     @ViewBuilder
-    private func chartLayout(in size: CGSize) -> some View {
+    private var detailContent: some View {
+        let sensors = viewModel.visibleSensors
+        let spacing: CGFloat = 12
+
         if let expandedKey = expandedSensor,
-           let sensor = viewModel.sensorConfigs.first(where: { $0.key == expandedKey }) {
-            // Expanded: single chart fills the space
+           let sensor = sensors.first(where: { $0.key == expandedKey }) {
             SensorChartView(
                 sensor: sensor,
                 readings: viewModel.readings[sensor.entityId] ?? [],
-                isExpanded: true
+                isExpanded: true,
+                showThresholdLines: viewModel.config?.showThresholdLines ?? true,
+                showAverageLine: viewModel.config?.showAverageLine ?? false
             )
             .matchedGeometryEffect(id: sensor.key, in: chartNamespace)
+            .padding(spacing)
             .onTapGesture {
                 withAnimation(.spring(duration: 0.35)) { expandedSensor = nil }
             }
             .transition(.opacity)
+        } else if sensors.isEmpty {
+            ContentUnavailableView(
+                "No Sensors",
+                systemImage: "sensor",
+                description: Text("Add sensors in Settings to get started.")
+            )
+        } else if groupedMode {
+            let grouped = Dictionary(grouping: sensors, by: \.unit)
+            let unitOrder = grouped.keys.sorted()
+            GeometryReader { geo in
+                let count = unitOrder.count
+                let columns = gridColumns(for: count, in: geo.size)
+                let rowCount = Int(ceil(Double(count) / Double(columns.count)))
+                let cellHeight = (geo.size.height - CGFloat(rowCount + 1) * spacing) / CGFloat(rowCount)
+
+                LazyVGrid(columns: columns, spacing: spacing) {
+                    ForEach(unitOrder, id: \.self) { unit in
+                        GroupedChartView(
+                            sensors: grouped[unit] ?? [],
+                            readings: viewModel.readings,
+                            showAverageLine: viewModel.config?.showAverageLine ?? false
+                        )
+                        .frame(height: max(cellHeight, 200))
+                    }
+                }
+                .padding(spacing)
+            }
+            .clipped()
+            .transition(.opacity)
         } else {
-            // Grid: 2x2 filling available space
-            // size already excludes the outer padding (from .padding() on GeometryReader content)
-            // but we need to account for the padding modifier applied after GeometryReader
-            let padding: CGFloat = 16 // the .padding() around chartLayout
-            let spacing: CGFloat = 16
-            let availableWidth = size.width - padding * 2
-            let availableHeight = size.height - padding * 2
-            let cellWidth = (availableWidth - spacing) / 2
-            let cellHeight = (availableHeight - spacing) / 2
+            GeometryReader { geo in
+                let columns = gridColumns(for: sensors.count, in: geo.size)
+                let rowCount = Int(ceil(Double(sensors.count) / Double(columns.count)))
+                let cellHeight = (geo.size.height - CGFloat(rowCount + 1) * spacing) / CGFloat(rowCount)
 
-            let columns = [
-                GridItem(.fixed(cellWidth), spacing: spacing),
-                GridItem(.fixed(cellWidth), spacing: spacing)
-            ]
-
-            LazyVGrid(columns: columns, spacing: spacing) {
-                ForEach(viewModel.sensorConfigs) { sensor in
-                    SensorChartView(
-                        sensor: sensor,
-                        readings: viewModel.readings[sensor.entityId] ?? [],
-                        isExpanded: false
-                    )
-                    .matchedGeometryEffect(id: sensor.key, in: chartNamespace)
-                    .frame(height: cellHeight)
-                    .onTapGesture {
-                        withAnimation(.spring(duration: 0.35)) {
-                            expandedSensor = sensor.key
+                LazyVGrid(columns: columns, spacing: spacing) {
+                    ForEach(sensors) { sensor in
+                        SensorChartView(
+                            sensor: sensor,
+                            readings: viewModel.readings[sensor.entityId] ?? [],
+                            isExpanded: false,
+                            showThresholdLines: viewModel.config?.showThresholdLines ?? true,
+                            showAverageLine: viewModel.config?.showAverageLine ?? false
+                        )
+                        .matchedGeometryEffect(id: sensor.key, in: chartNamespace)
+                        .frame(height: max(cellHeight, 150))
+                        .onTapGesture {
+                            withAnimation(.spring(duration: 0.35)) {
+                                expandedSensor = sensor.key
+                            }
+                        }
+                        .contentShape(Rectangle())
+                        .contextMenu {
+                            sensorContextMenu(for: sensor)
                         }
                     }
-                    .contentShape(Rectangle())
                 }
+                .padding(spacing)
             }
+            .clipped()
             .transition(.opacity)
         }
     }
-}
 
+    @ViewBuilder
+    private func sensorContextMenu(for sensor: SensorConfig) -> some View {
+        if let config = viewModel.config {
+            Menu("Move to\u{2026}") {
+                ForEach(config.categories) { cat in
+                    Button(cat.name) {
+                        viewModel.moveSensor(key: sensor.key, toCategoryId: cat.id, subcategoryId: nil)
+                    }
+                    ForEach(cat.subcategories) { sub in
+                        Button("\(cat.name) \u{2192} \(sub.name)") {
+                            viewModel.moveSensor(key: sensor.key, toCategoryId: cat.id, subcategoryId: sub.id)
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            Button(viewModel.config?.menuBarSensorKey == sensor.key
+                   ? "Menu Bar Sensor \u{2713}"
+                   : "Show in Menu Bar") {
+                viewModel.setMenuBarSensorKey(sensor.key)
+            }
+        }
+    }
+
+    private func gridColumns(for count: Int, in size: CGSize) -> [GridItem] {
+        let spacing: CGFloat = 12
+        let colCount: Int
+        switch count {
+        case 1: colCount = 1
+        case 2: colCount = 2
+        case 3: colCount = size.width > 900 ? 3 : 2
+        case 4: colCount = 2
+        case 5...6: colCount = 3
+        default: colCount = size.width > 1200 ? 4 : 3
+        }
+        return Array(repeating: GridItem(.flexible(), spacing: spacing), count: colCount)
+    }
+}
 
 struct VisualEffectBackground: NSViewRepresentable {
     let material: NSVisualEffectView.Material
@@ -148,3 +295,4 @@ struct VisualEffectBackground: NSViewRepresentable {
         nsView.blendingMode = blendingMode
     }
 }
+
