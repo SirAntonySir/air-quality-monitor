@@ -526,6 +526,20 @@ private struct SubcategoryEditorView: View {
                     .padding(.leading, 8)
                 }
 
+                HStack {
+                    Text("AQ Entity")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 60, alignment: .trailing)
+                    TextField("sensor.xxx_air_quality", text: Binding(
+                        get: { subcategory.airQualityEntityId ?? "" },
+                        set: { subcategory.airQualityEntityId = $0.isEmpty ? nil : $0 }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                    .controlSize(.small)
+                }
+                .padding(.leading, 8)
+
                 Button {
                     let newKey = "sensor-\(UUID().uuidString.prefix(8).lowercased())"
                     subcategory.sensors.append(SensorConfig(
@@ -711,11 +725,18 @@ private struct IconPickerButton: View {
         Button {
             showPicker = true
         } label: {
-            Image(systemName: validIconName)
-                .imageScale(.medium)
-                .foregroundStyle(.secondary)
-                .frame(width: 22, height: 22)
-                .background(RoundedRectangle(cornerRadius: 4).fill(.quaternary))
+            Group {
+                if isEmoji {
+                    Text(selectedIcon)
+                        .font(.system(size: 14))
+                } else {
+                    Image(systemName: validIconName)
+                        .imageScale(.medium)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 22, height: 22)
+            .background(RoundedRectangle(cornerRadius: 4).fill(.quaternary))
         }
         .buttonStyle(.plain)
         .help("Change icon (\(selectedIcon))")
@@ -727,6 +748,17 @@ private struct IconPickerButton: View {
     /// Fall back to a known icon if the name is empty or invalid
     private var validIconName: String {
         selectedIcon.isEmpty ? "questionmark.square.dashed" : selectedIcon
+    }
+
+    /// Whether the selected icon is an emoji (not an SF Symbol)
+    private var isEmoji: Bool {
+        Self.isEmojiString(selectedIcon)
+    }
+
+    static func isEmojiString(_ string: String) -> Bool {
+        guard !string.isEmpty else { return false }
+        // SF Symbol names are ASCII-only; emojis contain non-ASCII unicode scalars
+        return string.unicodeScalars.contains { !$0.isASCII }
     }
 
     private var iconPickerContent: some View {
@@ -743,6 +775,58 @@ private struct IconPickerButton: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
+                    // Emoji input section
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Emoji")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.leading, 4)
+
+                        HStack(spacing: 8) {
+                            TextField("Type or paste an emoji...", text: $searchText)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 160)
+
+                            Button {
+                                NSApp.orderFrontCharacterPalette(nil)
+                            } label: {
+                                Image(systemName: "face.smiling")
+                                    .font(.title3)
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 28, height: 28)
+                                    .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Open Emoji Picker")
+
+                            if Self.isEmojiString(searchText) {
+                                Button {
+                                    // Take only the first character
+                                    if let first = searchText.first {
+                                        selectedIcon = String(first)
+                                    } else {
+                                        selectedIcon = searchText
+                                    }
+                                    showPicker = false
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Text(searchText.first.map(String.init) ?? searchText)
+                                            .font(.title3)
+                                        Text("Use")
+                                            .font(.caption)
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.2)))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, 4)
+                    }
+
+                    Divider()
+
                     ForEach(filteredIcons, id: \.category) { group in
                         VStack(alignment: .leading, spacing: 6) {
                             Text(group.category)
@@ -777,7 +861,7 @@ private struct IconPickerButton: View {
             }
 
         }
-        .frame(width: 300, height: 340)
+        .frame(width: 300, height: 400)
     }
 
     private var filteredIcons: [(category: String, icons: [(name: String, label: String)])] {
@@ -831,15 +915,46 @@ private struct IconPickerButton: View {
             ("house", "House"),
             ("door.left.hand.open", "Door Open"),
             ("door.left.hand.closed", "Door Closed"),
-            ("bed.double", "Bed Double"),
-            ("sofa", "Sofa"),
-            ("bathtub", "Bath"),
+            ("bed.double", "Bedroom"),
+            ("sofa", "Living Room"),
+            ("bathtub", "Bathroom"),
+            ("shower", "Shower"),
             ("oven", "Kitchen"),
+            ("sink", "Sink"),
+            ("refrigerator", "Fridge"),
+            ("washer", "Washer"),
+            ("dryer", "Dryer"),
             ("lamp.desk", "Lamp"),
+            ("lamp.floor", "Floor Lamp"),
             ("chair.lounge", "Chair"),
+            ("table.furniture", "Table"),
+            ("cabinet", "Cabinet"),
+            ("stairs", "Stairs"),
             ("building.2", "Building"),
+            ("garage", "Garage"),
         ]),
-        ("Sensors", [
+        ("Garden & Plants", [
+            ("leaf", "Leaf"),
+            ("leaf.circle", "Leaf Circle"),
+            ("tree", "Tree"),
+            ("camera.macro", "Macro/Plant"),
+            ("sprinkler.and.droplets", "Sprinkler"),
+            ("drop.triangle", "Water Drop"),
+            ("sun.max", "Sunlight"),
+            ("sun.horizon", "Horizon"),
+            ("cloud.rain", "Rain"),
+            ("snowflake", "Frost"),
+        ]),
+        ("Water & Plumbing", [
+            ("drop", "Drop"),
+            ("drop.fill", "Drop Filled"),
+            ("drop.circle", "Drop Circle"),
+            ("spigot", "Spigot"),
+            ("pipe.and.drop", "Pipe"),
+            ("humidity", "Humidity"),
+            ("water.waves", "Water Waves"),
+        ]),
+        ("Sensors & Devices", [
             ("sensor", "Sensor"),
             ("waveform.path.ecg", "Activity"),
             ("antenna.radiowaves.left.and.right", "Signal"),
@@ -848,6 +963,11 @@ private struct IconPickerButton: View {
             ("eye", "Eye"),
             ("camera", "Camera"),
             ("speedometer", "Speed"),
+            ("cpu", "CPU"),
+            ("memorychip", "Memory"),
+            ("externaldrive", "Drive"),
+            ("server.rack", "Server"),
+            ("gauge.with.dots.needle.bottom.50percent", "Gauge"),
         ]),
         ("Security", [
             ("lock", "Lock"),
@@ -856,22 +976,8 @@ private struct IconPickerButton: View {
             ("bell", "Bell"),
             ("light.beacon.max", "Siren"),
             ("key", "Key"),
-        ]),
-        ("General", [
-            ("circle", "Circle"),
-            ("square", "Square"),
-            ("triangle", "Triangle"),
-            ("star", "Star"),
-            ("heart", "Heart"),
-            ("info.circle", "Info"),
-            ("exclamationmark.triangle", "Alert"),
-            ("checkmark.circle", "Check"),
-            ("gearshape", "Settings"),
-            ("cpu", "CPU"),
-            ("externaldrive", "Drive"),
-            ("server.rack", "Server"),
-            ("chart.xyaxis.line", "Chart"),
-            ("folder", "Folder"),
+            ("video", "Video"),
+            ("person.wave.2", "Motion"),
         ]),
     ]
 }

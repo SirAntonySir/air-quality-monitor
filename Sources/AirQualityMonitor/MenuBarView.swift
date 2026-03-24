@@ -7,7 +7,8 @@ struct MenuBarLabel: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: sensor?.icon ?? "aqi.medium")
+            IconView(name: sensor?.icon ?? "aqi.medium")
+                .foregroundStyle(viewModel.worstAirQualityLevel?.color ?? .secondary)
             if let sensor, let value = viewModel.currentValue(for: sensor) {
                 Text("\(Int(value))")
                     .monospacedDigit()
@@ -20,82 +21,83 @@ struct MenuBarView: View {
     let viewModel: SensorViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("Air Quality")
                 .font(.system(.headline, design: .rounded))
-                .padding(.horizontal, 16)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
 
-            VStack(spacing: 2) {
-                ForEach(viewModel.categories) { category in
-                    if !category.allSensors.isEmpty {
-                        MenuBarCategorySection(category: category, viewModel: viewModel)
+            ForEach(viewModel.categories) { category in
+                if !category.allSensors.isEmpty {
+                    GroupBox {
+                        MenuBarCategoryContent(category: category, viewModel: viewModel)
+                            .padding(.vertical, 2)
+                    } label: {
+                        HStack(spacing: 6) {
+                            IconView(name: category.icon)
+                            Text(category.name)
+                                .font(.system(.caption, design: .rounded, weight: .semibold))
+                        }
+                        .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 16)
+                }
+            }
+
+            GroupBox {
+                VStack(spacing: 8) {
+                    Picker("Menu Bar Sensor", selection: Binding(
+                        get: { viewModel.config?.menuBarSensorKey ?? viewModel.config?.allSensors.first?.key ?? "" },
+                        set: { viewModel.setMenuBarSensorKey($0) }
+                    )) {
+                        ForEach(viewModel.config?.allSensors ?? []) { sensor in
+                            Text(sensor.name).tag(sensor.key)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .controlSize(.small)
+
+                    HStack {
+                        if let updated = viewModel.lastUpdated {
+                            Text("Updated \(updated, style: .relative) ago")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+
+                        Spacer()
+
+                        Button("Refresh") {
+                            Task { await viewModel.fetchFullHistory() }
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.caption)
                     }
                 }
-            }
-            .padding(.vertical, 4)
-
-            Divider()
-
-            Picker("Menu Bar Sensor", selection: Binding(
-                get: { viewModel.config?.menuBarSensorKey ?? viewModel.config?.allSensors.first?.key ?? "" },
-                set: { viewModel.setMenuBarSensorKey($0) }
-            )) {
-                ForEach(viewModel.config?.allSensors ?? []) { sensor in
-                    Text(sensor.name).tag(sensor.key)
-                }
-            }
-            .pickerStyle(.menu)
-            .controlSize(.small)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 4)
-
-            HStack {
-                if let updated = viewModel.lastUpdated {
-                    Text("Updated \(updated, style: .relative) ago")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-
-                Spacer()
-
-                Button("Refresh") {
-                    Task { await viewModel.fetchFullHistory() }
-                }
-                .buttonStyle(.borderless)
-                .font(.caption)
+                .padding(.vertical, 2)
+            } label: {
+                Label("Controls", systemImage: "gearshape")
+                    .font(.system(.caption, design: .rounded, weight: .semibold))
+                    .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 6)
 
             Button("Quit") {
                 NSApplication.shared.terminate(nil)
             }
             .buttonStyle(.borderless)
-            .padding(.horizontal, 16)
-            .padding(.bottom, 8)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 12)
         }
-        .frame(width: 280)
+        .frame(width: 310)
     }
 }
 
-private struct MenuBarCategorySection: View {
+private struct MenuBarCategoryContent: View {
     let category: SensorCategory
     let viewModel: SensorViewModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            // Category header
-            HStack(spacing: 6) {
-                Image(systemName: category.icon)
-                Text(category.name)
-                    .font(.system(.caption, design: .rounded, weight: .semibold))
-            }
-            .foregroundStyle(.tertiary)
-            .padding(.horizontal, 16)
-            .padding(.top, 4)
-
             // Direct sensors
             ForEach(category.sensors) { sensor in
                 MenuBarSensorRow(sensor: sensor, viewModel: viewModel)
@@ -105,12 +107,27 @@ private struct MenuBarCategorySection: View {
             ForEach(category.subcategories) { sub in
                 if !sub.sensors.isEmpty {
                     HStack(spacing: 4) {
-                        Image(systemName: sub.icon)
+                        IconView(name: sub.icon)
                         Text(sub.name)
                             .font(.system(.caption2, design: .rounded))
+
+                        Spacer()
+
+                        if let level = viewModel.airQualityLevel(for: sub) {
+                            HStack(spacing: 3) {
+                                Circle()
+                                    .fill(level.color)
+                                    .frame(width: 5, height: 5)
+                                Text(level.label)
+                                    .font(.system(.caption2, weight: .semibold))
+                                    .foregroundStyle(level.color)
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(level.color.opacity(0.15)))
+                        }
                     }
                     .foregroundStyle(.quaternary)
-                    .padding(.horizontal, 24)
                     .padding(.top, 2)
 
                     ForEach(sub.sensors) { sensor in
@@ -137,7 +154,7 @@ private struct MenuBarSensorRow: View {
 
     var body: some View {
         HStack {
-            Image(systemName: sensor.icon)
+            IconView(name: sensor.icon)
                 .frame(width: 20)
                 .foregroundStyle(isWarning ? .red : sensor.swiftColor)
 
@@ -157,7 +174,6 @@ private struct MenuBarSensorRow: View {
             }
         }
         .font(.system(.body, design: .rounded))
-        .padding(.horizontal, 16)
         .padding(.vertical, 4)
     }
 

@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 struct SensorReading: Identifiable {
     let id = UUID()
@@ -23,6 +24,96 @@ struct HAStateEntry: Decodable {
         case entityId = "entity_id"
         case state
         case lastChanged = "last_changed"
+    }
+}
+
+enum AirQualityLevel: String, Codable, CaseIterable {
+    case good, fair, moderate, poor, veryPoor, extremelyPoor
+
+    init?(haState: String) {
+        switch haState.lowercased().replacingOccurrences(of: " ", with: "_") {
+        case "good": self = .good
+        case "fair": self = .fair
+        case "moderate": self = .moderate
+        case "poor": self = .poor
+        case "very_poor", "verypoor": self = .veryPoor
+        case "extremely_poor", "extremelypoor": self = .extremelyPoor
+        default: return nil
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .good: return .green
+        case .fair: return .yellow
+        case .moderate: return .orange
+        case .poor: return .red
+        case .veryPoor: return .purple
+        case .extremelyPoor: return .init(red: 0.5, green: 0, blue: 0)
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .good: return "Good"
+        case .fair: return "Fair"
+        case .moderate: return "Moderate"
+        case .poor: return "Poor"
+        case .veryPoor: return "Very Poor"
+        case .extremelyPoor: return "Extremely Poor"
+        }
+    }
+
+    var severity: Int {
+        switch self {
+        case .good: return 1
+        case .fair: return 2
+        case .moderate: return 3
+        case .poor: return 4
+        case .veryPoor: return 5
+        case .extremelyPoor: return 6
+        }
+    }
+}
+
+// MARK: - Icon Helper
+
+/// Renders an icon string as either an SF Symbol or an emoji.
+struct IconView: View {
+    let name: String
+    var body: some View {
+        if isEmoji(name) {
+            Text(name)
+        } else {
+            Image(systemName: name.isEmpty ? "questionmark.square.dashed" : name)
+        }
+    }
+
+    private func isEmoji(_ string: String) -> Bool {
+        guard !string.isEmpty else { return false }
+        return string.unicodeScalars.contains { !$0.isASCII }
+    }
+}
+
+/// A Label-like view that supports both SF Symbols and emoji icons.
+struct IconLabel: View {
+    let title: String
+    let icon: String
+
+    var body: some View {
+        if isEmoji(icon) {
+            HStack(spacing: 4) {
+                Text(icon)
+                Text(title)
+            }
+        } else {
+            Label(title, systemImage: icon.isEmpty ? "questionmark.square.dashed" : icon)
+        }
+    }
+
+    private func isEmoji(_ string: String) -> Bool {
+        guard !string.isEmpty else { return false }
+        return string.unicodeScalars.contains { !$0.isASCII }
     }
 }
 

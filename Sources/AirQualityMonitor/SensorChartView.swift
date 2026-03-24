@@ -88,7 +88,7 @@ struct SensorChartView: View {
 
     private var header: some View {
         HStack(alignment: .top) {
-            Label(sensor.name, systemImage: sensor.icon)
+            IconLabel(title: sensor.name, icon: sensor.icon)
                 .font(.system(isExpanded ? .title3 : .headline, design: .rounded))
                 .foregroundStyle(.secondary)
 

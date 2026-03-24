@@ -21,6 +21,11 @@ struct AppConfig: Codable {
         }
     }
 
+    /// All air quality entity IDs from subcategories
+    var allAirQualityEntityIds: [String] {
+        categories.flatMap(\.subcategories).compactMap(\.airQualityEntityId).filter { !$0.isEmpty }
+    }
+
     // MARK: - Migration from flat sensors array
 
     enum CodingKeys: String, CodingKey {
@@ -105,7 +110,8 @@ struct AppConfig: Codable {
                         SensorConfig(key: "pm25", entityId: "sensor.alpstuga_air_quality_monitor_pm2_5",
                                      name: "PM2.5", unit: "\u{00b5}g/m\u{00b3}", icon: "smoke",
                                      color: "purple", thresholdMin: nil, thresholdMax: 25, filterOutliers: true),
-                    ]
+                    ],
+                    airQualityEntityId: "sensor.alpstuga_air_quality_monitor_air_quality"
                 )
             ]
         ),
@@ -166,6 +172,7 @@ struct SensorSubcategory: Codable, Identifiable {
     var name: String
     var icon: String
     var sensors: [SensorConfig]
+    var airQualityEntityId: String?
 }
 
 // MARK: - Sensor

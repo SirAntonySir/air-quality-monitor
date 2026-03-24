@@ -71,14 +71,30 @@ struct ContentView: View {
                 .tag("__all__")
 
             ForEach(viewModel.categories.filter { !$0.allSensors.isEmpty }) { category in
-                Label(category.name, systemImage: category.icon)
+                IconLabel(title: category.name, icon: category.icon)
                     .font(.system(.body, weight: .medium))
                     .tag("cat:\(category.id)")
 
                 ForEach(category.subcategories.filter { !$0.sensors.isEmpty }) { sub in
-                    Label(sub.name, systemImage: sub.icon)
-                        .padding(.leading, 12)
-                        .tag("cat:\(category.id)/sub:\(sub.id)")
+                    HStack {
+                        IconLabel(title: sub.name, icon: sub.icon)
+                        Spacer()
+                        if let level = viewModel.airQualityLevel(for: sub) {
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(level.color)
+                                    .frame(width: 6, height: 6)
+                                Text(level.label)
+                                    .font(.system(.caption2, weight: .semibold))
+                                    .foregroundStyle(level.color)
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(level.color.opacity(0.12)))
+                        }
+                    }
+                    .padding(.leading, 12)
+                    .tag("cat:\(category.id)/sub:\(sub.id)")
                 }
             }
         }
@@ -275,6 +291,38 @@ struct ContentView: View {
         default: colCount = size.width > 1200 ? 4 : 3
         }
         return Array(repeating: GridItem(.flexible(), spacing: spacing), count: colCount)
+    }
+}
+
+private struct AirQualityBadgeBar: View {
+    let viewModel: SensorViewModel
+
+    var body: some View {
+        let states = viewModel.airQualityRoomStates
+        if !states.isEmpty {
+            HStack(spacing: 6) {
+                ForEach(states, id: \.subcategory.id) { item in
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(item.level?.color ?? .gray)
+                            .frame(width: 7, height: 7)
+                        Text(item.subcategory.name)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text(item.level?.label ?? "–")
+                            .font(.system(.caption2, weight: .semibold))
+                            .foregroundStyle(item.level?.color ?? .gray)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill((item.level?.color ?? .gray).opacity(0.12))
+                    )
+                    .help("\(item.subcategory.name): \(item.level?.label ?? "Unknown")")
+                }
+            }
+        }
     }
 }
 

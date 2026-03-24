@@ -5,6 +5,7 @@ import SwiftUI
 @MainActor
 final class SensorViewModel {
     var readings: [String: [SensorReading]] = [:]
+    var airQualityLevels: [String: AirQualityLevel] = [:]
     var lastError: String?
     var isLoading = false
     var lastUpdated: Date?
@@ -87,6 +88,24 @@ final class SensorViewModel {
 
     func currentValue(for sensor: SensorConfig) -> Double? {
         readings[sensor.entityId]?.last?.value
+    }
+
+    func airQualityLevel(for sub: SensorSubcategory) -> AirQualityLevel? {
+        guard let entityId = sub.airQualityEntityId, !entityId.isEmpty else { return nil }
+        return airQualityLevels[entityId]
+    }
+
+    /// Subcategories that have an AQ entity, paired with their current level
+    var airQualityRoomStates: [(subcategory: SensorSubcategory, level: AirQualityLevel?)] {
+        guard let config else { return [] }
+        return config.categories.flatMap(\.subcategories)
+            .filter { $0.airQualityEntityId != nil && !($0.airQualityEntityId?.isEmpty ?? true) }
+            .map { ($0, airQualityLevel(for: $0)) }
+    }
+
+    /// Worst AQ level across all rooms
+    var worstAirQualityLevel: AirQualityLevel? {
+        airQualityLevels.values.max(by: { $0.severity < $1.severity })
     }
 
     func setMenuBarSensorKey(_ key: String?) {
@@ -183,6 +202,7 @@ final class SensorViewModel {
             lastError = nil
             lastUpdated = Date()
             NotificationManager.shared.seedState(readings: readings, sensors: config.allSensors)
+            await fetchAirQualityLevels()
         } catch {
             lastError = error.localizedDescription
         }
@@ -226,6 +246,35 @@ final class SensorViewModel {
         if anyUpdated {
             lastError = nil
             lastUpdated = Date()
+            await fetchAirQualityLevels()
+        }
+    }
+
+    private func fetchAirQualityLevels() async {
+        guard let config, let client else { return }
+        let entityIds = config.allAirQualityEntityIds
+        guard !entityIds.isEmpty else { return }
+
+        let results = await withTaskGroup(of: (String, String?).self) { group in
+            for entityId in entityIds {
+                group.addTask {
+                    let state = try? await client.fetchStringState(entityId: entityId)
+                    return (entityId, state)
+                }
+            }
+            var collected: [(String, String?)] = []
+            for await result in group {
+                collected.append(result)
+            }
+            return collected
+        }
+
+        for (entityId, state) in results {
+            if let state, let level = AirQualityLevel(haState: state) {
+                airQualityLevels[entityId] = level
+            } else {
+                airQualityLevels[entityId] = nil
+            }
         }
     }
 }

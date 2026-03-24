@@ -71,6 +71,29 @@ actor HAClient {
         guard let value = Double(entry.state) else { return nil }
         return SensorReading(date: entry.lastChanged, value: value)
     }
+    func fetchStringState(entityId: String) async throws -> String? {
+        let urlString = "\(baseURL)/api/states/\(entityId)"
+        guard let url = URL(string: urlString) else {
+            throw HAError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw HAError.invalidResponse
+        }
+
+        let decoder = JSONDecoder.homeAssistant
+        let entry = try decoder.decode(HAStateEntry.self, from: data)
+
+        let state = entry.state.lowercased()
+        if state == "unavailable" || state == "unknown" { return nil }
+        return entry.state
+    }
 }
 
 enum HAError: LocalizedError {
