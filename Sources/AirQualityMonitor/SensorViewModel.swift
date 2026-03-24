@@ -1,16 +1,46 @@
 import Foundation
 import SwiftUI
 
+enum TimeRange: Int, CaseIterable, Identifiable {
+    case oneHour = 1
+    case sixHours = 6
+    case twelveHours = 12
+    case twentyFourHours = 24
+    case threeDays = 72
+    case sevenDays = 168
+    case tenDays = 240
+
+    var id: Int { rawValue }
+
+    var label: String {
+        switch self {
+        case .oneHour: return "1h"
+        case .sixHours: return "6h"
+        case .twelveHours: return "12h"
+        case .twentyFourHours: return "24h"
+        case .threeDays: return "3d"
+        case .sevenDays: return "7d"
+        case .tenDays: return "10d"
+        }
+    }
+
+    static func closest(to hours: Int) -> TimeRange {
+        allCases.min(by: { abs($0.rawValue - hours) < abs($1.rawValue - hours) }) ?? .twelveHours
+    }
+}
+
 @Observable
 @MainActor
 final class SensorViewModel {
     var readings: [String: [SensorReading]] = [:]
+    var latestValues: [String: SensorReading] = [:]
     var airQualityLevels: [String: AirQualityLevel] = [:]
     var lastError: String?
     var isLoading = false
     var lastUpdated: Date?
     var config: AppConfig?
     var configLoaded = false
+    var selectedTimeRange: TimeRange = .twelveHours
 
     /// Currently selected category in sidebar
     var selectedCategoryId: String?
@@ -67,6 +97,7 @@ final class SensorViewModel {
             let loaded = try ConfigLoader.load()
             config = loaded
             client = HAClient(baseURL: loaded.homeAssistantURL, token: loaded.token)
+            selectedTimeRange = TimeRange.closest(to: loaded.historyHours)
             // Auto-select first category
             if selectedCategoryId == nil {
                 selectedCategoryId = loaded.categories.first?.id
@@ -78,6 +109,11 @@ final class SensorViewModel {
         }
     }
 
+    func changeTimeRange(to range: TimeRange) {
+        selectedTimeRange = range
+        Task { await fetchFullHistory() }
+    }
+
     var menuBarSensor: SensorConfig? {
         guard let config else { return nil }
         if let key = config.menuBarSensorKey {
@@ -87,7 +123,7 @@ final class SensorViewModel {
     }
 
     func currentValue(for sensor: SensorConfig) -> Double? {
-        readings[sensor.entityId]?.last?.value
+        latestValues[sensor.entityId]?.value ?? readings[sensor.entityId]?.last?.value
     }
 
     func airQualityLevel(for sub: SensorSubcategory) -> AirQualityLevel? {
@@ -195,7 +231,7 @@ final class SensorViewModel {
 
         do {
             let entityIds = config.allSensors.map(\.entityId)
-            let history = try await client.fetchHistory(entityIds: entityIds, hours: config.historyHours)
+            let history = try await client.fetchHistory(entityIds: entityIds, hours: selectedTimeRange.rawValue)
             for (entityId, data) in history {
                 readings[entityId] = data
             }
@@ -226,14 +262,31 @@ final class SensorViewModel {
             return collected
         }
 
-        let cutoff = Date().addingTimeInterval(-Double(config.historyHours) * 3600)
+        let cutoff = Date().addingTimeInterval(-Double(selectedTimeRange.rawValue) * 3600)
+        // Max gap allowed before a reading is considered disconnected from history
+        let maxGap: TimeInterval = Double(config.refreshIntervalSeconds) * 5
         var anyUpdated = false
 
         for (sensor, reading) in results {
             guard let reading else { continue }
 
+            // Always update the latest polled value (used for header display)
+            latestValues[sensor.entityId] = reading
+
             var current = readings[sensor.entityId] ?? []
             if let last = current.last, last.date == reading.date { continue }
+
+            // Only append to chart data if it doesn't create a time gap
+            if let last = current.last {
+                let gap = reading.date.timeIntervalSince(last.date)
+                if gap > maxGap {
+                    // Gap too large — skip appending to avoid stretching the chart
+                    // The header still shows the current value via latestValues
+                    NotificationManager.shared.checkReading(reading, sensor: sensor)
+                    anyUpdated = true
+                    continue
+                }
+            }
 
             current.append(reading)
             current.removeAll { $0.date < cutoff }

@@ -7,6 +7,8 @@ struct SensorChartView: View {
     var isExpanded: Bool = false
     var showThresholdLines: Bool = true
     var showAverageLine: Bool = false
+    var timeRangeHours: Int = 12
+    var latestValue: Double?
 
     @State private var hoverDate: Date?
     @State private var hoverValue: Double?
@@ -16,8 +18,15 @@ struct SensorChartView: View {
     @State private var cachedAverage: Double?
     @State private var isHovered = false
 
+    // Drag-to-select state
+    @State private var selectionStart: Date?
+    @State private var selectionEnd: Date?
+    @State private var isDragging = false
+
+    @State private var lastRecomputedCount: Int = -1
+
     private var currentValue: Double? {
-        readings.last?.value
+        latestValue ?? readings.last?.value
     }
 
     var body: some View {
@@ -42,20 +51,29 @@ struct SensorChartView: View {
         .onChange(of: readings.count) {
             recomputeCache()
         }
-        .onChange(of: readings.last?.value) {
-            recomputeCache()
-        }
         .onAppear {
             recomputeCache()
         }
     }
 
     private func recomputeCache() {
-        let filtered = (sensor.filterOutliers == true)
-            ? ChartDataProcessor.filterOutliers(from: readings)
-            : readings
+        // Skip if nothing changed
+        guard readings.count != lastRecomputedCount else { return }
+        lastRecomputedCount = readings.count
+
+        // Only run expensive outlier filter on small datasets (< 2000 points)
+        // For large datasets, LTTB downsampling naturally smooths spikes
+        let filtered: [SensorReading]
+        if sensor.filterOutliers == true && readings.count < 2000 {
+            filtered = ChartDataProcessor.filterOutliers(from: readings)
+        } else {
+            filtered = readings
+        }
         cachedFiltered = filtered
-        cachedPoints = ChartDataProcessor.buildTaggedPoints(from: filtered, sensor: sensor)
+
+        let targetCount = isExpanded ? 1200 : 600
+        let downsampled = ChartDataProcessor.downsample(filtered, targetCount: targetCount)
+        cachedPoints = ChartDataProcessor.buildTaggedPoints(from: downsampled, sensor: sensor)
 
         guard !filtered.isEmpty else {
             cachedYDomain = 0...100
@@ -63,15 +81,16 @@ struct SensorChartView: View {
             return
         }
 
-        let sum = filtered.reduce(0.0) { $0 + $1.value }
-        cachedAverage = sum / Double(filtered.count)
-
         var lo = Double.infinity
         var hi = -Double.infinity
+        var sum = 0.0
         for r in filtered {
             if r.value < lo { lo = r.value }
             if r.value > hi { hi = r.value }
+            sum += r.value
         }
+        cachedAverage = sum / Double(filtered.count)
+
         if let tMin = sensor.thresholdMin { lo = min(lo, tMin) }
         if let tMax = sensor.thresholdMax { hi = max(hi, tMax) }
         let padding = max((hi - lo) * 0.12, 1.0)
@@ -84,6 +103,29 @@ struct SensorChartView: View {
 
     private var displayDate: Date? {
         hoverDate
+    }
+
+    private var selectionStats: (min: Double, max: Double, avg: Double, count: Int, start: Date, end: Date)? {
+        guard let start = selectionStart, let end = selectionEnd else { return nil }
+        let lo = min(start, end)
+        let hi = max(start, end)
+        let selected = cachedFiltered.filter { $0.date >= lo && $0.date <= hi }
+        guard !selected.isEmpty else { return nil }
+
+        var minVal = Double.infinity
+        var maxVal = -Double.infinity
+        var sum = 0.0
+        for r in selected {
+            if r.value < minVal { minVal = r.value }
+            if r.value > maxVal { maxVal = r.value }
+            sum += r.value
+        }
+        return (min: minVal, max: maxVal, avg: sum / Double(selected.count),
+                count: selected.count, start: lo, end: hi)
+    }
+
+    private var hasSelection: Bool {
+        selectionStart != nil && selectionEnd != nil
     }
 
     private var header: some View {
@@ -162,8 +204,27 @@ struct SensorChartView: View {
                     }
             }
 
-            // Hover crosshair
-            if let hDate = hoverDate, let hValue = hoverValue {
+            // Selection rectangle
+            if let start = selectionStart, let end = selectionEnd {
+                let lo = min(start, end)
+                let hi = max(start, end)
+                RectangleMark(
+                    xStart: .value("Start", lo),
+                    xEnd: .value("End", hi)
+                )
+                .foregroundStyle(sensor.swiftColor.opacity(0.08))
+
+                RuleMark(x: .value("SelStart", lo))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    .foregroundStyle(sensor.swiftColor.opacity(0.4))
+
+                RuleMark(x: .value("SelEnd", hi))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    .foregroundStyle(sensor.swiftColor.opacity(0.4))
+            }
+
+            // Hover crosshair (hidden during drag / when selection active)
+            if !hasSelection, let hDate = hoverDate, let hValue = hoverValue {
                 RuleMark(x: .value("Hover", hDate))
                     .lineStyle(StrokeStyle(lineWidth: 1))
                     .foregroundStyle(Color.primary.opacity(0.3))
@@ -183,9 +244,15 @@ struct SensorChartView: View {
                     .foregroundStyle(Color.secondary.opacity(0.2))
                 AxisTick(stroke: StrokeStyle(lineWidth: 0.5))
                     .foregroundStyle(Color.secondary.opacity(0.3))
-                AxisValueLabel(format: .dateTime.hour().minute())
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                if timeRangeHours > 24 {
+                    AxisValueLabel(format: .dateTime.month(.abbreviated).day().hour())
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } else {
+                    AxisValueLabel(format: .dateTime.hour().minute())
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .chartYAxis {
@@ -205,6 +272,7 @@ struct SensorChartView: View {
                     .fill(.clear)
                     .contentShape(Rectangle())
                     .onContinuousHover { phase in
+                        guard !isDragging, !hasSelection else { return }
                         switch phase {
                         case .active(let location):
                             guard let plotFrame = proxy.plotFrame else {
@@ -230,7 +298,75 @@ struct SensorChartView: View {
                             hoverValue = nil
                         }
                     }
+                    .gesture(
+                        DragGesture(minimumDistance: 4)
+                            .onChanged { drag in
+                                guard let plotFrame = proxy.plotFrame else { return }
+                                let origin = geo[plotFrame].origin
+
+                                if !isDragging {
+                                    isDragging = true
+                                    hoverDate = nil
+                                    hoverValue = nil
+                                }
+
+                                let startX = drag.startLocation.x - origin.x
+                                let currentX = drag.location.x - origin.x
+
+                                if let startDate: Date = proxy.value(atX: startX),
+                                   let currentDate: Date = proxy.value(atX: currentX) {
+                                    selectionStart = startDate
+                                    selectionEnd = currentDate
+                                }
+                            }
+                            .onEnded { _ in
+                                isDragging = false
+                            }
+                    )
+                    .onTapGesture {
+                        selectionStart = nil
+                        selectionEnd = nil
+                    }
             }
+        }
+        .overlay(alignment: .top) {
+            if let stats = selectionStats {
+                selectionStatsOverlay(stats)
+                    .padding(.top, 4)
+                    .transition(.opacity)
+            }
+        }
+    }
+
+    private func selectionStatsOverlay(
+        _ stats: (min: Double, max: Double, avg: Double, count: Int, start: Date, end: Date)
+    ) -> some View {
+        VStack(spacing: 3) {
+            HStack(spacing: 12) {
+                statLabel("Min", value: stats.min)
+                statLabel("Avg", value: stats.avg)
+                statLabel("Max", value: stats.max)
+            }
+            Text("\(formatTimestamp(stats.start)) \u{2013} \(formatTimestamp(stats.end))")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func statLabel(_ label: String, value: Double) -> some View {
+        HStack(spacing: 3) {
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(formattedValue(value))
+                .font(.system(.caption, design: .rounded, weight: .semibold))
+                .foregroundStyle(sensor.isOutOfRange(value) ? .red : .primary)
+            Text(sensor.unit)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
     }
 
@@ -242,7 +378,10 @@ struct SensorChartView: View {
     }
 
     private func formatTimestamp(_ date: Date) -> String {
-        date.formatted(.dateTime.hour().minute().second())
+        if timeRangeHours > 24 {
+            return date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+        }
+        return date.formatted(.dateTime.hour().minute().second())
     }
 }
 
@@ -252,9 +391,12 @@ struct GroupedChartView: View {
     let sensors: [SensorConfig]
     let readings: [String: [SensorReading]]
     var showAverageLine: Bool = false
+    var timeRangeHours: Int = 12
 
     @State private var hoverDate: Date?
     @State private var cachedYDomain: ClosedRange<Double> = 0...100
+    @State private var cachedDownsampled: [String: [SensorReading]] = [:]
+    @State private var lastRecomputedCount: Int = -1
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -272,20 +414,30 @@ struct GroupedChartView: View {
     }
 
     private func recomputeCache() {
+        let count = readingsCount
+        guard count != lastRecomputedCount else { return }
+        lastRecomputedCount = count
+
         var lo = Double.infinity
         var hi = -Double.infinity
+        var downsampled: [String: [SensorReading]] = [:]
         for sensor in sensors {
-            for r in readings[sensor.entityId] ?? [] {
+            let sensorReadings = readings[sensor.entityId] ?? []
+            let ds = ChartDataProcessor.downsample(sensorReadings, targetCount: 600)
+            downsampled[sensor.entityId] = ds
+            for r in sensorReadings {
                 if r.value < lo { lo = r.value }
                 if r.value > hi { hi = r.value }
             }
         }
-        guard lo.isFinite else {
+        cachedDownsampled = downsampled
+
+        if lo.isFinite {
+            let padding = max((hi - lo) * 0.12, 1.0)
+            cachedYDomain = (lo - padding)...(hi + padding)
+        } else {
             cachedYDomain = 0...100
-            return
         }
-        let padding = max((hi - lo) * 0.12, 1.0)
-        cachedYDomain = (lo - padding)...(hi + padding)
     }
 
     private var legend: some View {
@@ -313,7 +465,9 @@ struct GroupedChartView: View {
             Spacer()
 
             if let hoverDate {
-                Text(hoverDate.formatted(.dateTime.hour().minute().second()))
+                Text(timeRangeHours > 24
+                     ? hoverDate.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+                     : hoverDate.formatted(.dateTime.hour().minute().second()))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -323,8 +477,8 @@ struct GroupedChartView: View {
     private var chart: some View {
         Chart {
             ForEach(sensors) { sensor in
-                let sensorReadings = readings[sensor.entityId] ?? []
-                ForEach(sensorReadings) { reading in
+                let ds = cachedDownsampled[sensor.entityId] ?? []
+                ForEach(ds) { reading in
                     LineMark(
                         x: .value("Time", reading.date),
                         y: .value("Value", reading.value),
@@ -373,9 +527,15 @@ struct GroupedChartView: View {
                     .foregroundStyle(Color.secondary.opacity(0.2))
                 AxisTick(stroke: StrokeStyle(lineWidth: 0.5))
                     .foregroundStyle(Color.secondary.opacity(0.3))
-                AxisValueLabel(format: .dateTime.hour().minute())
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                if timeRangeHours > 24 {
+                    AxisValueLabel(format: .dateTime.month(.abbreviated).day().hour())
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } else {
+                    AxisValueLabel(format: .dateTime.hour().minute())
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .chartYAxis {

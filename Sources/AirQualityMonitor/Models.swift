@@ -203,6 +203,69 @@ enum ChartDataProcessor {
         return zip(readings, keep).compactMap { $0.1 ? $0.0 : nil }
     }
 
+    /// Downsamples readings to a target count using the LTTB algorithm.
+    /// Preserves visual shape by keeping the most visually significant points.
+    /// Always keeps first and last points. Returns original array if already small enough.
+    static func downsample(
+        _ readings: [SensorReading],
+        targetCount: Int = 800
+    ) -> [SensorReading] {
+        guard readings.count > targetCount, targetCount >= 3 else { return readings }
+
+        var result: [SensorReading] = []
+        result.reserveCapacity(targetCount)
+
+        let bucketSize = Double(readings.count - 2) / Double(targetCount - 2)
+
+        // Always keep first point
+        result.append(readings[0])
+        var prevSelected = 0
+
+        for i in 0..<(targetCount - 2) {
+            let bucketStart = Int(Double(i + 1) * bucketSize) + 1
+            let bucketEnd = min(Int(Double(i + 2) * bucketSize) + 1, readings.count - 1)
+
+            // Average of next bucket (for area calculation)
+            let nextBucketStart = min(bucketEnd, readings.count - 1)
+            let nextBucketEnd = min(Int(Double(i + 3) * bucketSize) + 1, readings.count)
+            var avgX = 0.0
+            var avgY = 0.0
+            let nextCount = nextBucketEnd - nextBucketStart
+            if nextCount > 0 {
+                for j in nextBucketStart..<nextBucketEnd {
+                    avgX += readings[j].date.timeIntervalSince1970
+                    avgY += readings[j].value
+                }
+                avgX /= Double(nextCount)
+                avgY /= Double(nextCount)
+            }
+
+            // Find point in current bucket with largest triangle area
+            var maxArea = -1.0
+            var maxIndex = bucketStart
+            let prevX = readings[prevSelected].date.timeIntervalSince1970
+            let prevY = readings[prevSelected].value
+
+            for j in bucketStart..<bucketEnd {
+                let area = abs(
+                    (prevX - avgX) * (readings[j].value - prevY) -
+                    (prevX - readings[j].date.timeIntervalSince1970) * (avgY - prevY)
+                )
+                if area > maxArea {
+                    maxArea = area
+                    maxIndex = j
+                }
+            }
+
+            result.append(readings[maxIndex])
+            prevSelected = maxIndex
+        }
+
+        // Always keep last point
+        result.append(readings[readings.count - 1])
+        return result
+    }
+
     static func buildTaggedPoints(
         from readings: [SensorReading],
         sensor: SensorConfig

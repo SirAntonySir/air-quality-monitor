@@ -13,8 +13,11 @@ actor HAClient {
 
     func fetchHistory(entityIds: [String], hours: Int) async throws -> [String: [SensorReading]] {
         let startTime = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-Double(hours) * 3600))
+        let endTime = ISO8601DateFormatter().string(from: Date())
         let entityFilter = entityIds.joined(separator: ",")
-        let urlString = "\(baseURL)/api/history/period/\(startTime)?filter_entity_id=\(entityFilter)&significant_changes_only=0&no_attributes"
+        // Use significant_changes_only for ranges > 24h to keep response size manageable
+        let significantOnly = hours > 24 ? "1" : "0"
+        let urlString = "\(baseURL)/api/history/period/\(startTime)?end_time=\(endTime)&filter_entity_id=\(entityFilter)&significant_changes_only=\(significantOnly)&no_attributes"
 
         guard let url = URL(string: urlString) else {
             throw HAError.invalidURL

@@ -24,6 +24,7 @@ struct ContentView: View {
                             } label: {
                                 Label("Back", systemImage: "chevron.left")
                             }
+                            .keyboardShortcut(.escape, modifiers: [])
                         }
                     }
                     ToolbarItem(placement: .automatic) {
@@ -35,6 +36,18 @@ struct ContentView: View {
                         }
                         .pickerStyle(.segmented)
                         .help(groupedMode ? "Combined chart" : "Individual charts")
+                    }
+                    ToolbarItem(placement: .automatic) {
+                        Picker("Time Range", selection: Binding(
+                            get: { viewModel.selectedTimeRange },
+                            set: { viewModel.changeTimeRange(to: $0) }
+                        )) {
+                            ForEach(TimeRange.allCases) { range in
+                                Text(range.label).tag(range)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .help("History time range")
                     }
                     ToolbarItem(placement: .automatic) {
                         Button {
@@ -181,13 +194,12 @@ struct ContentView: View {
                 readings: viewModel.readings[sensor.entityId] ?? [],
                 isExpanded: true,
                 showThresholdLines: viewModel.config?.showThresholdLines ?? true,
-                showAverageLine: viewModel.config?.showAverageLine ?? false
+                showAverageLine: viewModel.config?.showAverageLine ?? false,
+                timeRangeHours: viewModel.selectedTimeRange.rawValue,
+                latestValue: viewModel.latestValues[sensor.entityId]?.value
             )
             .matchedGeometryEffect(id: sensor.key, in: chartNamespace)
             .padding(spacing)
-            .onTapGesture {
-                withAnimation(.spring(duration: 0.35)) { expandedSensor = nil }
-            }
             .transition(.opacity)
         } else if sensors.isEmpty {
             ContentUnavailableView(
@@ -209,7 +221,8 @@ struct ContentView: View {
                         GroupedChartView(
                             sensors: grouped[unit] ?? [],
                             readings: viewModel.readings,
-                            showAverageLine: viewModel.config?.showAverageLine ?? false
+                            showAverageLine: viewModel.config?.showAverageLine ?? false,
+                            timeRangeHours: viewModel.selectedTimeRange.rawValue
                         )
                         .frame(height: max(cellHeight, 200))
                     }
@@ -231,16 +244,18 @@ struct ContentView: View {
                             readings: viewModel.readings[sensor.entityId] ?? [],
                             isExpanded: false,
                             showThresholdLines: viewModel.config?.showThresholdLines ?? true,
-                            showAverageLine: viewModel.config?.showAverageLine ?? false
+                            showAverageLine: viewModel.config?.showAverageLine ?? false,
+                            timeRangeHours: viewModel.selectedTimeRange.rawValue,
+                            latestValue: viewModel.latestValues[sensor.entityId]?.value
                         )
                         .matchedGeometryEffect(id: sensor.key, in: chartNamespace)
                         .frame(height: max(cellHeight, 150))
-                        .onTapGesture {
+                        .contentShape(Rectangle())
+                        .onTapGesture(count: 2) {
                             withAnimation(.spring(duration: 0.35)) {
                                 expandedSensor = sensor.key
                             }
                         }
-                        .contentShape(Rectangle())
                         .contextMenu {
                             sensorContextMenu(for: sensor)
                         }
