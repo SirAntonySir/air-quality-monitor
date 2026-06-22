@@ -5,6 +5,8 @@ struct ContentView: View {
     @State private var expandedSensor: String?
     @State private var sidebarVisibility: NavigationSplitViewVisibility = .automatic
     @State private var groupedMode = false
+    /// Device-group ids collapsed in the tile overview (session-only).
+    @State private var collapsedGroups: Set<String> = []
     @Namespace private var chartNamespace
 
     var body: some View {
@@ -69,6 +71,11 @@ struct ContentView: View {
         .background {
             VisualEffectBackground(material: .underWindowBackground, blendingMode: .behindWindow)
                 .ignoresSafeArea()
+        }
+        .onChange(of: viewModel.pendingFocusSensorKey) { _, key in
+            guard let key else { return }
+            withAnimation(.spring(duration: 0.35)) { expandedSensor = key }
+            viewModel.pendingFocusSensorKey = nil
         }
     }
 
@@ -210,6 +217,11 @@ struct ContentView: View {
         } else if groupedMode {
             let grouped = Dictionary(grouping: sensors, by: \.unit)
             let unitOrder = grouped.keys.sorted()
+            let roomLabels = Dictionary(
+                uniqueKeysWithValues: sensors.map {
+                    ($0.key, viewModel.roomLabel(forSensorKey: $0.key) ?? $0.name)
+                }
+            )
             GeometryReader { geo in
                 let count = unitOrder.count
                 let columns = gridColumns(for: count, in: geo.size)
@@ -221,6 +233,7 @@ struct ContentView: View {
                         GroupedChartView(
                             sensors: grouped[unit] ?? [],
                             readings: viewModel.readings,
+                            roomLabels: roomLabels,
                             showAverageLine: viewModel.config?.showAverageLine ?? false,
                             timeRangeHours: viewModel.selectedTimeRange.rawValue
                         )
@@ -231,6 +244,9 @@ struct ContentView: View {
             }
             .clipped()
             .transition(.opacity)
+        } else if viewModel.selectedCategoryId == nil {
+            tileOverview
+                .transition(.opacity)
         } else {
             GeometryReader { geo in
                 let columns = gridColumns(for: sensors.count, in: geo.size)
@@ -266,6 +282,134 @@ struct ContentView: View {
             .clipped()
             .transition(.opacity)
         }
+    }
+
+    private var tileOverview: some View {
+        // One column per distinct metric name, ordered by how many rooms have it
+        // (most common leftmost). Every room reuses this same column set so matching
+        // metrics line up vertically across rooms (gaps trail off to the right).
+        let columnNames = metricColumnNames
+        let columns = Array(
+            repeating: GridItem(.flexible(), spacing: 12),
+            count: max(columnNames.count, 1)
+        )
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                ForEach(viewModel.visibleDeviceGroups) { group in
+                    VStack(alignment: .leading, spacing: 10) {
+                        deviceHeader(group)
+                        if !collapsedGroups.contains(group.id) {
+                            LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
+                                ForEach(columnNames, id: \.self) { metric in
+                                    if let sensor = group.sensors.first(where: { $0.name == metric }) {
+                                        SensorTileView(
+                                            sensor: sensor,
+                                            readings: viewModel.readings[sensor.entityId] ?? [],
+                                            latestValue: viewModel.latestValues[sensor.entityId]?.value,
+                                            trend: viewModel.trend(for: sensor)
+                                        )
+                                        .frame(height: 150)
+                                        .onTapGesture {
+                                            withAnimation(.spring(duration: 0.35)) { expandedSensor = sensor.key }
+                                        }
+                                        .contextMenu { sensorContextMenu(for: sensor) }
+                                    } else {
+                                        Color.clear.frame(height: 150)
+                                    }
+                                }
+                            }
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
+                    }
+                }
+            }
+            .padding(16)
+        }
+    }
+
+    /// Distinct sensor names across visible groups, ordered by the number of rooms
+    /// that have each metric (descending), with first-appearance order breaking ties.
+    /// Defines the shared column layout for the tile overview — common metrics fill
+    /// from the left, rarer ones trail off to the right.
+    private var metricColumnNames: [String] {
+        var roomCount: [String: Int] = [:]
+        var firstSeen: [String: Int] = [:]
+        var seq = 0
+        for group in viewModel.visibleDeviceGroups {
+            var inThisGroup = Set<String>()
+            for sensor in group.sensors {
+                if firstSeen[sensor.name] == nil {
+                    firstSeen[sensor.name] = seq
+                    seq += 1
+                }
+                if inThisGroup.insert(sensor.name).inserted {
+                    roomCount[sensor.name, default: 0] += 1
+                }
+            }
+        }
+        return roomCount.keys.sorted { a, b in
+            if roomCount[a] != roomCount[b] { return roomCount[a]! > roomCount[b]! }
+            return firstSeen[a]! < firstSeen[b]!
+        }
+    }
+
+    private func deviceHeader(_ group: DeviceGroup) -> some View {
+        let collapsed = collapsedGroups.contains(group.id)
+        return Button {
+            withAnimation(.spring(duration: 0.3)) {
+                if collapsed { collapsedGroups.remove(group.id) }
+                else { collapsedGroups.insert(group.id) }
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "chevron.right")
+                    .font(.system(.caption, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(collapsed ? 0 : 90))
+                IconLabel(title: group.name, icon: group.icon)
+                    .font(.system(.title3, design: .rounded, weight: .semibold))
+                if let status = group.status {
+                    statusPill(status)
+                }
+                if let battery = group.battery {
+                    batteryChip(battery)
+                }
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func statusPill(_ level: AirQualityLevel) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(level.color)
+                .frame(width: 6, height: 6)
+            Text(level.label)
+                .font(.system(.caption, weight: .semibold))
+                .foregroundStyle(level.color)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(level.color.opacity(0.12)))
+    }
+
+    private func batteryChip(_ level: Double) -> some View {
+        let symbol: String
+        switch level {
+        case 80...: symbol = "battery.100"
+        case 50..<80: symbol = "battery.75percent"
+        case 25..<50: symbol = "battery.50percent"
+        case 10..<25: symbol = "battery.25percent"
+        default: symbol = "battery.0percent"
+        }
+        return HStack(spacing: 3) {
+            Image(systemName: symbol)
+            Text("\(Int(level.rounded()))%")
+        }
+        .font(.caption)
+        .foregroundStyle(level < 20 ? .red : .secondary)
     }
 
     @ViewBuilder

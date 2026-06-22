@@ -26,6 +26,24 @@ struct AppConfig: Codable {
         categories.flatMap(\.subcategories).compactMap(\.airQualityEntityId).filter { !$0.isEmpty }
     }
 
+    /// All battery entity IDs declared on categories or subcategories
+    var allBatteryEntityIds: [String] {
+        let cat = categories.compactMap(\.batteryEntityId)
+        let sub = categories.flatMap(\.subcategories).compactMap(\.batteryEntityId)
+        return (cat + sub).filter { !$0.isEmpty }
+    }
+
+    /// Locate which category (and optional subcategory) a sensor key lives in.
+    func location(forSensorKey key: String) -> (category: SensorCategory, subcategory: SensorSubcategory?)? {
+        for cat in categories {
+            if cat.sensors.contains(where: { $0.key == key }) { return (cat, nil) }
+            for sub in cat.subcategories where sub.sensors.contains(where: { $0.key == key }) {
+                return (cat, sub)
+            }
+        }
+        return nil
+    }
+
     // MARK: - Migration from flat sensors array
 
     enum CodingKeys: String, CodingKey {
@@ -158,6 +176,8 @@ struct SensorCategory: Codable, Identifiable {
     var icon: String
     var sensors: [SensorConfig]
     var subcategories: [SensorSubcategory]
+    /// Optional device battery entity (e.g. for a category that maps to one battery device)
+    var batteryEntityId: String?
 
     /// All sensors in this category (direct + from subcategories)
     var allSensors: [SensorConfig] {
@@ -173,6 +193,8 @@ struct SensorSubcategory: Codable, Identifiable {
     var icon: String
     var sensors: [SensorConfig]
     var airQualityEntityId: String?
+    /// Optional device battery entity for this room/device
+    var batteryEntityId: String?
 }
 
 // MARK: - Sensor
@@ -208,6 +230,87 @@ struct SensorConfig: Codable, Identifiable {
         if let min = thresholdMin, value < min { return true }
         if let max = thresholdMax, value > max { return true }
         return false
+    }
+
+    /// A vertical gradient that paints the line red wherever it leaves the
+    /// in-range band and `swiftColor` inside it. Applied via `.foregroundStyle(_:)`
+    /// it maps to the plot area, so coloring tracks the y-domain and recovers
+    /// automatically when a value re-enters the normal zone — no per-point
+    /// segmentation that can get stuck on red after an excursion.
+    func thresholdLineStyle(yDomain: ClosedRange<Double>) -> LinearGradient {
+        let normal = swiftColor
+        let warn = Color.red
+        let span = yDomain.upperBound - yDomain.lowerBound
+        guard span > 0 else {
+            let flat = isOutOfRange(yDomain.lowerBound) ? warn : normal
+            return LinearGradient(colors: [flat], startPoint: .top, endPoint: .bottom)
+        }
+        // Fraction from the top of the plot (highest value) down to a given value.
+        func frac(_ v: Double) -> Double {
+            min(max((yDomain.upperBound - v) / span, 0), 1)
+        }
+
+        var stops: [Gradient.Stop] = []
+        if let tMax = thresholdMax {
+            let f = frac(tMax)
+            stops.append(.init(color: warn, location: 0))
+            stops.append(.init(color: warn, location: f))
+            stops.append(.init(color: normal, location: f))
+        } else {
+            stops.append(.init(color: normal, location: 0))
+        }
+        if let tMin = thresholdMin {
+            let f = frac(tMin)
+            stops.append(.init(color: normal, location: f))
+            stops.append(.init(color: warn, location: f))
+            stops.append(.init(color: warn, location: 1))
+        } else {
+            stops.append(.init(color: normal, location: 1))
+        }
+        stops.sort { $0.location < $1.location }
+        return LinearGradient(stops: stops, startPoint: .top, endPoint: .bottom)
+    }
+
+    /// Fill for the area beneath the line: same red/normal threshold bands as
+    /// `thresholdLineStyle`, but with the opacity fading from `topOpacity` at the
+    /// top of the plot down to fully transparent at the bottom. Both the band
+    /// switches and the fade run along the y-axis, so they compose into one
+    /// vertical gradient.
+    func thresholdAreaStyle(yDomain: ClosedRange<Double>, topOpacity: Double = 0.3) -> LinearGradient {
+        let normal = swiftColor
+        let warn = Color.red
+        func alpha(_ location: Double) -> Double { topOpacity * (1 - location) }
+        let span = yDomain.upperBound - yDomain.lowerBound
+        guard span > 0 else {
+            let flat = isOutOfRange(yDomain.lowerBound) ? warn : normal
+            return LinearGradient(
+                stops: [.init(color: flat.opacity(topOpacity), location: 0),
+                        .init(color: flat.opacity(0), location: 1)],
+                startPoint: .top, endPoint: .bottom)
+        }
+        func frac(_ v: Double) -> Double {
+            min(max((yDomain.upperBound - v) / span, 0), 1)
+        }
+
+        var stops: [Gradient.Stop] = []
+        if let tMax = thresholdMax {
+            let f = frac(tMax)
+            stops.append(.init(color: warn.opacity(alpha(0)), location: 0))
+            stops.append(.init(color: warn.opacity(alpha(f)), location: f))
+            stops.append(.init(color: normal.opacity(alpha(f)), location: f))
+        } else {
+            stops.append(.init(color: normal.opacity(alpha(0)), location: 0))
+        }
+        if let tMin = thresholdMin {
+            let f = frac(tMin)
+            stops.append(.init(color: normal.opacity(alpha(f)), location: f))
+            stops.append(.init(color: warn.opacity(alpha(f)), location: f))
+            stops.append(.init(color: warn.opacity(alpha(1)), location: 1))
+        } else {
+            stops.append(.init(color: normal.opacity(alpha(1)), location: 1))
+        }
+        stops.sort { $0.location < $1.location }
+        return LinearGradient(stops: stops, startPoint: .top, endPoint: .bottom)
     }
 }
 

@@ -12,8 +12,19 @@ struct SensorChartView: View {
 
     @State private var hoverDate: Date?
     @State private var hoverValue: Double?
-    @State private var cachedPoints: [TaggedPoint] = []
+    @State private var cachedPoints: [SensorReading] = []
     @State private var cachedYDomain: ClosedRange<Double> = 0...100
+    // Actual plotted min/max — a mark's gradient maps to the mark's bounding
+    // box, not the (padded) plot domain, so threshold coloring is keyed off these.
+    @State private var cachedDataMin: Double = 0
+    @State private var cachedDataMax: Double = 100
+    // Floor the area fill sits on: a dynamic tail below the data, not the scale
+    // minimum — so a low/mid line doesn't flood the whole lower chart with color.
+    @State private var cachedAreaFloor: Double = 0
+    // Whether each threshold sits near enough to the data to be worth showing.
+    // The graph is sized to the data, not the thresholds.
+    @State private var cachedShowMax = true
+    @State private var cachedShowMin = true
     @State private var cachedFiltered: [SensorReading] = []
     @State private var cachedAverage: Double?
     @State private var isHovered = false
@@ -72,8 +83,23 @@ struct SensorChartView: View {
         cachedFiltered = filtered
 
         let targetCount = isExpanded ? 1200 : 600
-        let downsampled = ChartDataProcessor.downsample(filtered, targetCount: targetCount)
-        cachedPoints = ChartDataProcessor.buildTaggedPoints(from: downsampled, sensor: sensor)
+        cachedPoints = ChartDataProcessor.downsample(filtered, targetCount: targetCount)
+
+        // Bounding box of the actually-plotted points (drives gradient coloring).
+        var dataLo = Double.infinity
+        var dataHi = -Double.infinity
+        for p in cachedPoints {
+            if p.value < dataLo { dataLo = p.value }
+            if p.value > dataHi { dataHi = p.value }
+        }
+        if dataLo.isFinite {
+            cachedDataMin = dataLo
+            cachedDataMax = dataHi
+            // Tail below the data scales with the data's own range (min 1 unit),
+            // never dropping below the plot floor.
+            let tail = max((dataHi - dataLo) * 0.6, 1.0)
+            cachedAreaFloor = dataLo - tail
+        }
 
         guard !filtered.isEmpty else {
             cachedYDomain = 0...100
@@ -91,10 +117,38 @@ struct SensorChartView: View {
         }
         cachedAverage = sum / Double(filtered.count)
 
-        if let tMin = sensor.thresholdMin { lo = min(lo, tMin) }
-        if let tMax = sensor.thresholdMax { hi = max(hi, tMax) }
-        let padding = max((hi - lo) * 0.12, 1.0)
-        cachedYDomain = (lo - padding)...(hi + padding)
+        // Size the graph to the DATA, not the thresholds. A threshold is pulled
+        // into view (and its line shown) only when it sits near the readings —
+        // within ~0.6× the data's own range of the data band.
+        let range = max(hi - lo, 1.0)
+        let padding = max(range * 0.15, 1.0)
+        let nearMargin = range * 0.6
+        var domLo = lo - padding
+        var domHi = hi + padding
+
+        func near(_ t: Double) -> Bool {
+            t >= lo - nearMargin && t <= hi + nearMargin
+        }
+
+        if let tMax = sensor.thresholdMax, near(tMax) {
+            cachedShowMax = true
+            domLo = min(domLo, tMax - padding)
+            domHi = max(domHi, tMax + padding)
+        } else {
+            cachedShowMax = false
+        }
+
+        if let tMin = sensor.thresholdMin, near(tMin) {
+            cachedShowMin = true
+            domLo = min(domLo, tMin - padding)
+            domHi = max(domHi, tMin + padding)
+        } else {
+            cachedShowMin = false
+        }
+
+        cachedYDomain = domLo...domHi
+        // Don't let the fill tail extend past the plot floor.
+        cachedAreaFloor = max(cachedAreaFloor, domLo)
     }
 
     private var displayValue: Double? {
@@ -159,18 +213,31 @@ struct SensorChartView: View {
     private var chart: some View {
         Chart {
             ForEach(cachedPoints) { point in
+                AreaMark(
+                    x: .value("Time", point.date),
+                    yStart: .value(sensor.unit, cachedAreaFloor),
+                    yEnd: .value(sensor.unit, point.value)
+                )
+                // Fill spans the dynamic floor up to dataMax — its bounding box.
+                .foregroundStyle(sensor.thresholdAreaStyle(
+                    yDomain: cachedAreaFloor...cachedDataMax))
+                .interpolationMethod(.catmullRom)
+            }
+
+            ForEach(cachedPoints) { point in
                 LineMark(
                     x: .value("Time", point.date),
-                    y: .value(sensor.unit, point.value),
-                    series: .value("Segment", point.segment)
+                    y: .value(sensor.unit, point.value)
                 )
-                .foregroundStyle(point.isWarning ? .red : sensor.swiftColor)
+                // Line's bbox spans its own min...max.
+                .foregroundStyle(sensor.thresholdLineStyle(
+                    yDomain: cachedDataMin...cachedDataMax))
                 .lineStyle(StrokeStyle(lineWidth: isExpanded ? 2.5 : 2))
                 .interpolationMethod(.catmullRom)
             }
 
             if showThresholdLines {
-                if let max = sensor.thresholdMax {
+                if cachedShowMax, let max = sensor.thresholdMax {
                     RuleMark(y: .value(sensor.unit, max))
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [6, 4]))
                         .foregroundStyle(.red.opacity(0.4))
@@ -181,7 +248,7 @@ struct SensorChartView: View {
                         }
                 }
 
-                if let min = sensor.thresholdMin {
+                if cachedShowMin, let min = sensor.thresholdMin {
                     RuleMark(y: .value(sensor.unit, min))
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [6, 4]))
                         .foregroundStyle(.red.opacity(0.4))
@@ -238,6 +305,7 @@ struct SensorChartView: View {
             }
         }
         .chartYScale(domain: cachedYDomain)
+        .chartLegend(.hidden)
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: isExpanded ? 12 : 6)) { _ in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
@@ -390,8 +458,18 @@ struct SensorChartView: View {
 struct GroupedChartView: View {
     let sensors: [SensorConfig]
     let readings: [String: [SensorReading]]
+    var roomLabels: [String: String] = [:]
     var showAverageLine: Bool = false
     var timeRangeHours: Int = 12
+
+    /// Distinct palette for overlaid lines — avoids the config-color collision
+    /// (every °C sensor is "orange"); red stays reserved for out-of-range values.
+    private static let palette: [Color] = [.blue, .orange, .green, .purple, .pink, .teal, .indigo, .brown]
+
+    private func color(for index: Int) -> Color { Self.palette[index % Self.palette.count] }
+    private func label(for sensor: SensorConfig) -> String { roomLabels[sensor.key] ?? sensor.name }
+    private var styleDomain: [String] { sensors.map(\.key) }
+    private var styleRange: [Color] { sensors.indices.map { color(for: $0) } }
 
     @State private var hoverDate: Date?
     @State private var cachedYDomain: ClosedRange<Double> = 0...100
@@ -442,22 +520,23 @@ struct GroupedChartView: View {
 
     private var legend: some View {
         HStack(spacing: 16) {
-            ForEach(sensors) { sensor in
+            ForEach(Array(sensors.enumerated()), id: \.element.id) { index, sensor in
                 let sensorReadings = readings[sensor.entityId] ?? []
                 let value = hoverValue(for: sensor) ?? sensorReadings.last?.value
+                let lineColor = color(for: index)
 
                 HStack(spacing: 6) {
                     Circle()
-                        .fill(sensor.swiftColor)
+                        .fill(lineColor)
                         .frame(width: 8, height: 8)
-                    Text(sensor.name)
+                    Text(label(for: sensor))
                         .font(.system(.caption, design: .rounded))
                         .foregroundStyle(.secondary)
 
                     if let value {
                         Text(formattedValue(value) + " " + sensor.unit)
                             .font(.system(.callout, design: .rounded, weight: .semibold))
-                            .foregroundStyle(sensor.isOutOfRange(value) ? .red : sensor.swiftColor)
+                            .foregroundStyle(sensor.isOutOfRange(value) ? .red : lineColor)
                     }
                 }
             }
@@ -484,20 +563,20 @@ struct GroupedChartView: View {
                         y: .value("Value", reading.value),
                         series: .value("Sensor", sensor.key)
                     )
-                    .foregroundStyle(sensor.swiftColor)
+                    .foregroundStyle(by: .value("Sensor", sensor.key))
                     .lineStyle(StrokeStyle(lineWidth: 2))
                     .interpolationMethod(.catmullRom)
                 }
             }
 
             if showAverageLine {
-                ForEach(sensors) { sensor in
+                ForEach(Array(sensors.enumerated()), id: \.element.id) { index, sensor in
                     let sensorReadings = readings[sensor.entityId] ?? []
                     if !sensorReadings.isEmpty {
                         let avg = sensorReadings.reduce(0.0) { $0 + $1.value } / Double(sensorReadings.count)
                         RuleMark(y: .value("Value", avg))
                             .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                            .foregroundStyle(sensor.swiftColor.opacity(0.4))
+                            .foregroundStyle(color(for: index).opacity(0.4))
                     }
                 }
             }
@@ -507,19 +586,20 @@ struct GroupedChartView: View {
                     .lineStyle(StrokeStyle(lineWidth: 1))
                     .foregroundStyle(Color.primary.opacity(0.3))
 
-                ForEach(sensors) { sensor in
+                ForEach(Array(sensors.enumerated()), id: \.element.id) { index, sensor in
                     if let value = hoverValue(for: sensor) {
                         PointMark(
                             x: .value("Hover", hoverDate),
                             y: .value("Value", value)
                         )
                         .symbolSize(40)
-                        .foregroundStyle(sensor.swiftColor)
+                        .foregroundStyle(color(for: index))
                     }
                 }
             }
         }
         .chartYScale(domain: cachedYDomain)
+        .chartForegroundStyleScale(domain: styleDomain, range: styleRange)
         .chartLegend(.hidden)
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: 8)) { _ in

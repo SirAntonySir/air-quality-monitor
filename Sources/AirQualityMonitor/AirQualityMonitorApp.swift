@@ -5,7 +5,9 @@ struct AirQualityMonitorApp: App {
     @State private var viewModel = SensorViewModel()
 
     var body: some Scene {
-        WindowGroup {
+        // Single window (not WindowGroup) so the menu bar can open/focus the
+        // one dashboard via openWindow(id: "main") instead of spawning copies.
+        Window("Air Quality Monitor", id: "main") {
             Group {
                 if viewModel.hasConfig {
                     ContentView(viewModel: viewModel)
